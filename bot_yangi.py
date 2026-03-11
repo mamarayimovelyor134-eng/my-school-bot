@@ -5,10 +5,8 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from aiogram import Bot, Dispatcher, types, F
 
-# Logging
 logging.basicConfig(level=logging.INFO)
 
-# Token
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("BOT_TOKEN topilmadi!")
@@ -21,7 +19,7 @@ dp = Dispatcher()
 async def start(message: types.Message):
     kb = [[types.KeyboardButton(text="🧠 Testni boshlash")]]
     keyboard = types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
-    await message.answer("Salom! Bot ishga tushdi. Testni boshlang:", reply_markup=keyboard)
+    await message.answer("Salom! Testni boshlang:", reply_markup=keyboard)
 
 
 @dp.message(F.text == "🧠 Testni boshlash")
@@ -43,32 +41,24 @@ async def callbacks(callback: types.CallbackQuery):
     await callback.answer()
 
 
-class SimpleHandler(BaseHTTPRequestHandler):
+class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot is alive!")
-
-    def log_message(self, format, *args):
-        pass  # Log chiqishini yopish
+        self.wfile.write(b"OK")
+    def log_message(self, *a): pass
 
 
-def run_web_server():
+def web():
     port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), SimpleHandler)
-    logging.info(f"Web server {port} portda ishlamoqda")
-    server.serve_forever()
+    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 
 async def main():
-    logging.info("Bot polling boshlandi...")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
-    # Web serverni alohida threadda ishga tushirish
-    t = threading.Thread(target=run_web_server, daemon=True)
-    t.start()
-    # Botni ishga tushirish
+    threading.Thread(target=web, daemon=True).start()
     asyncio.run(main())
