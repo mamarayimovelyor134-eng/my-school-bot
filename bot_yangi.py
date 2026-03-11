@@ -1,8 +1,11 @@
 import asyncio
+import os
+from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 
 # BotFatherdan hozirgina olgan YANGI tokeningizni shu yerga qo'ying
-TOKEN = "8213419235:AAH-ijI9gR51St5RCtOVVW5gsotB8NETeEg"
+# Xavfsizlik uchun token muhit o'zgaruvchilaridan (BOT_TOKEN) olinadi:
+TOKEN = os.environ.get("BOT_TOKEN", "8213419235:AAH-ijI9gR51St5RCtOVVW5gsotB8NETeEg")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -30,8 +33,23 @@ async def callbacks(callback: types.CallbackQuery):
         await callback.message.answer("❌ Noto'g'ri.")
     await callback.answer()
 
+async def handle(request):
+    return web.Response(text="Bot is running!")
+
 async def main():
     print("--- BOT TEST UCHUN TAYYOR ---")
+    
+    # Render xizmatida Port scan timeout xatosini oldini olish uchun yordamchi web server:
+    app = web.Application()
+    app.router.add_get("/", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    port = int(os.environ.get("PORT", 8000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"Web server port {port} da ishga tushdi.")
+    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
