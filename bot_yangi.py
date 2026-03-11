@@ -5,7 +5,9 @@ from aiogram import Bot, Dispatcher, types, F
 
 # BotFatherdan hozirgina olgan YANGI tokeningizni shu yerga qo'ying
 # Xavfsizlik uchun token muhit o'zgaruvchilaridan (BOT_TOKEN) olinadi:
-TOKEN = os.environ.get("BOT_TOKEN", "8213419235:AAH-ijI9gR51St5RCtOVVW5gsotB8NETeEg")
+TOKEN = os.environ.get("BOT_TOKEN")
+if not TOKEN:
+    raise ValueError("Token topilmadi! Iltimos BOT_TOKEN o'zgaruvchisini o'rnating.")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
