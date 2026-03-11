@@ -1,22 +1,36 @@
 import asyncio
 import os
+import logging
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
-# BotFatherdan hozirgina olgan YANGI tokeningizni shu yerga qo'ying
-# Xavfsizlik uchun token muhit o'zgaruvchilaridan (BOT_TOKEN) olinadi:
+# Logging yoqish (Render loglarida xatolarni ko'rish uchun)
+logging.basicConfig(level=logging.INFO)
+
+# Token muhit o'zgaruvchisidan olinadi (Render Environment Variables)
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
-    raise ValueError("Token topilmadi! Iltimos BOT_TOKEN o'zgaruvchisini o'rnating.")
+    raise ValueError("BOT_TOKEN environment variable topilmadi!")
+
+# Render saytidagi loyihaning URL manzili
+WEBHOOK_HOST = os.environ.get("RENDER_EXTERNAL_URL", "")
+WEBHOOK_PATH = f"/webhook/{TOKEN}"
+WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
+
+# Port (Render o'zi beradi)
+PORT = int(os.environ.get("PORT", 10000))
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
+
 
 @dp.message(F.text == "/start")
 async def start(message: types.Message):
     kb = [[types.KeyboardButton(text="🧠 Testni boshlash")]]
     keyboard = types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
-    await message.answer("Salom! Bot qayta tug'ildi. Testni boshlang:", reply_markup=keyboard)
+    await message.answer("Salom! Bot ishga tushdi. Testni boshlang:", reply_markup=keyboard)
+
 
 @dp.message(F.text == "🧠 Testni boshlash")
 async def start_test(message: types.Message):
@@ -27,6 +41,7 @@ async def start_test(message: types.Message):
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons)
     await message.answer("❓ 'Xamsa' muallifi kim?", reply_markup=keyboard)
 
+
 @dp.callback_query()
 async def callbacks(callback: types.CallbackQuery):
     if callback.data == "ok":
@@ -35,24 +50,28 @@ async def callbacks(callback: types.CallbackQuery):
         await callback.message.answer("❌ Noto'g'ri.")
     await callback.answer()
 
-async def handle(request):
-    return web.Response(text="Bot is running!")
 
-async def main():
-    print("--- BOT TEST UCHUN TAYYOR ---")
-    
-    # Render xizmatida Port scan timeout xatosini oldini olish uchun yordamchi web server:
+async def on_startup(bot: Bot):
+    await bot.set_webhook(WEBHOOK_URL)
+    logging.info(f"Webhook o'rnatildi: {WEBHOOK_URL}")
+
+
+async def on_shutdown(bot: Bot):
+    await bot.delete_webhook()
+    logging.info("Webhook o'chirildi.")
+
+
+def main():
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+
     app = web.Application()
-    app.router.add_get("/", handle)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    
-    port = int(os.environ.get("PORT", 8000))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    print(f"Web server port {port} da ishga tushdi.")
-    
-    await dp.start_polling(bot)
+    SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
+    setup_application(app, dp, bot=bot)
+
+    logging.info(f"Server {PORT} portda ishlamoqda...")
+    web.run_app(app, host="0.0.0.0", port=PORT)
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
