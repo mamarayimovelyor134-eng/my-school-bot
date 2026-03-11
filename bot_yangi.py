@@ -2,7 +2,7 @@ import asyncio
 import os
 import logging
 import threading
-from aiohttp import web
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from aiogram import Bot, Dispatcher, types, F
 
 # Logging
@@ -43,36 +43,32 @@ async def callbacks(callback: types.CallbackQuery):
     await callback.answer()
 
 
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+
+    def log_message(self, format, *args):
+        pass  # Log chiqishini yopish
+
+
 def run_web_server():
-    """Render portini ochiq ushlab turuvchi yordamchi server"""
     port = int(os.environ.get("PORT", 10000))
-
-    async def handle(request):
-        return web.Response(text="Bot is alive!")
-
-    async def run():
-        app = web.Application()
-        app.router.add_get("/", handle)
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", port)
-        await site.start()
-        logging.info(f"Web server {port} portda ishlamoqda")
-        await asyncio.sleep(3600 * 24 * 365)  # 1 yil ushlab turadi
-
-    asyncio.run(run())
+    server = HTTPServer(("0.0.0.0", port), SimpleHandler)
+    logging.info(f"Web server {port} portda ishlamoqda")
+    server.serve_forever()
 
 
 async def main():
-    logging.info("Bot polling ishga tushdi...")
-    # Eski webhookni o'chirish
+    logging.info("Bot polling boshlandi...")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
-    # Web serverni alohida threadda ishga tushiramiz
+    # Web serverni alohida threadda ishga tushirish
     t = threading.Thread(target=run_web_server, daemon=True)
     t.start()
-    # Botni asosiy threadda ishga tushiramiz
+    # Botni ishga tushirish
     asyncio.run(main())
