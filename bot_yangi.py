@@ -1,25 +1,17 @@
 import asyncio
 import os
 import logging
+import threading
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
-# Logging yoqish (Render loglarida xatolarni ko'rish uchun)
+# Logging
 logging.basicConfig(level=logging.INFO)
 
-# Token muhit o'zgaruvchisidan olinadi (Render Environment Variables)
+# Token
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
-    raise ValueError("BOT_TOKEN environment variable topilmadi!")
-
-# Render saytidagi loyihaning URL manzili
-WEBHOOK_HOST = os.environ.get("RENDER_EXTERNAL_URL", "")
-WEBHOOK_PATH = f"/webhook/{TOKEN}"
-WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
-
-# Port (Render o'zi beradi)
-PORT = int(os.environ.get("PORT", 10000))
+    raise ValueError("BOT_TOKEN topilmadi!")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -51,27 +43,36 @@ async def callbacks(callback: types.CallbackQuery):
     await callback.answer()
 
 
-async def on_startup(bot: Bot):
-    await bot.set_webhook(WEBHOOK_URL)
-    logging.info(f"Webhook o'rnatildi: {WEBHOOK_URL}")
+def run_web_server():
+    """Render portini ochiq ushlab turuvchi yordamchi server"""
+    port = int(os.environ.get("PORT", 10000))
+
+    async def handle(request):
+        return web.Response(text="Bot is alive!")
+
+    async def run():
+        app = web.Application()
+        app.router.add_get("/", handle)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
+        logging.info(f"Web server {port} portda ishlamoqda")
+        await asyncio.sleep(3600 * 24 * 365)  # 1 yil ushlab turadi
+
+    asyncio.run(run())
 
 
-async def on_shutdown(bot: Bot):
-    await bot.delete_webhook()
-    logging.info("Webhook o'chirildi.")
-
-
-def main():
-    dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown)
-
-    app = web.Application()
-    SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
-    setup_application(app, dp, bot=bot)
-
-    logging.info(f"Server {PORT} portda ishlamoqda...")
-    web.run_app(app, host="0.0.0.0", port=PORT)
+async def main():
+    logging.info("Bot polling ishga tushdi...")
+    # Eski webhookni o'chirish
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
-    main()
+    # Web serverni alohida threadda ishga tushiramiz
+    t = threading.Thread(target=run_web_server, daemon=True)
+    t.start()
+    # Botni asosiy threadda ishga tushiramiz
+    asyncio.run(main())
