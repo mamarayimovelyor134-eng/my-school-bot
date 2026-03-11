@@ -18,90 +18,73 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 users_db = {} 
 
-# --- O'YINLAR MA'LUMOTI ---
-GAMES_DATA = {
-    "math": [
-        {"q": "12 * 5 + 15 = ?", "a": "75", "o": ["65", "75", "85", "70"]},
-        {"q": "250 / 5 - 10 = ?", "a": "40", "o": ["30", "40", "50", "45"]}
-    ],
-    "logic": [
-        {"q": "Qaysi oyda 28 kun bor?", "a": "Hamma oyda", "o": ["Fevral", "Yanvar", "Hamma oyda", "Hech qaysi"]},
-        {"q": "Uni sotsang bo'lmaydi, uni sotib olib bo'lmaydi. Bu nima?", "a": "Aql", "o": ["Oltin", "Bilim", "Aql", "Kitob"]}
-    ]
+# --- PULLIK MATERIALLAR BAZASI ---
+PREMIUM_MATERIALS = {
+    "math_pro": {"name": "📐 Matematika: 7-sinf 'Funksiyalar' ochiq dars", "price": 5000, "link": "https://prezi.com/math-open-lesson"},
+    "phys_pro": {"name": "🧲 Fizika: 9-sinf 'Magnit maydoni' tayyor slayd", "price": 7000, "link": "https://slideshare.com/physics-9"},
+    "eng_pro": {"name": "🇬🇧 English: Grade 5 'My Family' creative lesson", "price": 4000, "link": "https://google.com/drive/eng-5"}
 }
 
 # --- MENU ---
 def main_menu():
     builder = ReplyKeyboardBuilder()
+    builder.row(types.KeyboardButton(text="👨‍🏫 O'qituvchilar (Pullik materiallar)"))
     builder.row(types.KeyboardButton(text="🎮 Interaktiv O'yin-Darslar"))
-    builder.row(types.KeyboardButton(text="📚 Maktab Darsliklari"), types.KeyboardButton(text="👨‍🏫 O'qituvchilar uchun"))
-    builder.row(types.KeyboardButton(text="🧠 Bilim Sinash"), types.KeyboardButton(text="🤖 AI Assistant"))
-    builder.row(types.KeyboardButton(text="💰 Hamyon"), types.KeyboardButton(text="👫 Do'stlarni taklif qilish"))
+    builder.row(types.KeyboardButton(text="📚 Maktab Darsliklari"), types.KeyboardButton(text="🧠 Bilim Sinash"))
+    builder.row(types.KeyboardButton(text="💰 Hamyon"), types.KeyboardButton(text="💎 VIP Bo'lim"))
+    builder.row(types.KeyboardButton(text="👫 Do'stlarni taklif qilish"))
     return builder.as_markup(resize_keyboard=True)
 
 # --- START ---
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
-    if user_id not in users_db: users_db[user_id] = {"balance": 0}
-    await message.answer("🎓 *Milliy Ta'lim Platformasi 2.0!*\n\nDarslar endi yanada qiziqarli o'yinlar shaklida!", parse_mode="Markdown", reply_markup=main_menu())
+    if user_id not in users_db: users_db[user_id] = {"balance": 1000} # Bonus 1000 so'm yangi foydalanuvchiga
+    await message.answer("🎓 *Milliy Ta'lim va Biznes Platformasi!*\n\nProfessional ochiq darslar va metodik qo'llanmalar bo'limi ochildi!", parse_mode="Markdown", reply_markup=main_menu())
 
-# --- O'YINLAR BO'LIMI ---
-@dp.message(F.text == "🎮 Interaktiv O'yin-Darslar")
-async def show_games(message: types.Message):
+# --- O'QITUVCHILAR UCHUN PULLIK BO'LIM ---
+@dp.message(F.text == "👨‍🏫 O'qituvchilar (Pullik materiallar)")
+async def show_premium(message: types.Message):
     builder = InlineKeyboardBuilder()
-    builder.row(types.InlineKeyboardButton(text="🔢 Matematik Duel", callback_data="play_math"))
-    builder.row(types.InlineKeyboardButton(text="🧩 Mantiqiy Kvest", callback_data="play_logic"))
-    await message.answer("🎮 *O'yin turini tanlang:*", parse_mode="Markdown", reply_markup=builder.as_markup())
+    for key, item in PREMIUM_MATERIALS.items():
+        builder.row(types.InlineKeyboardButton(text=f"{item['name']} - {item['price']} so'm", callback_data=f"buy_{key}"))
+    await message.answer("💎 *EKSKLUZIV MATERIALLAR:*\n\nKerakli ochiq dars materialini tanlang. Sotib olganingizdan so'ng yuklab olish havolasi ochiladi.", parse_mode="Markdown", reply_markup=builder.as_markup())
 
-@dp.callback_query(F.data.startswith("play_"))
-async def start_game(callback: types.CallbackQuery):
-    game_type = callback.data.split("_")[1]
-    quiz = random.choice(GAMES_DATA[game_type])
-    
-    builder = InlineKeyboardBuilder()
-    options = quiz["o"]
-    random.shuffle(options)
-    for opt in options:
-        builder.add(types.InlineKeyboardButton(text=opt, callback_data=f"res_{opt}_{game_type}"))
-    builder.adjust(2)
-    
-    await callback.message.edit_text(f"🕹 *Savol:* {quiz['q']}", parse_mode="Markdown", reply_markup=builder.as_markup())
-
-@dp.callback_query(F.data.startswith("res_"))
-async def check_game(callback: types.CallbackQuery):
-    data = callback.data.split("_")
-    ans, g_type = data[1], data[2]
-    
-    # To'g'ri javobni topish
-    correct_ans = ""
-    for q in GAMES_DATA[g_type]:
-        if q["a"] == ans or ans in q["o"]: # Soddalashtirilgan qidiruv
-            correct_ans = q["a"]
-            break
-
+@dp.callback_query(F.data.startswith("buy_"))
+async def process_purchase(callback: types.CallbackQuery):
+    item_key = callback.data.split("_")[1]
+    item = PREMIUM_MATERIALS[item_key]
     user_id = callback.from_user.id
-    if user_id not in users_db: users_db[user_id] = {"balance": 0}
-
-    if ans == correct_ans:
-        users_db[user_id]["balance"] += 200
-        await callback.message.edit_text(f"🏆 *TABRIKLAYMIZ!* Siz yutdingiz!\n💰 +200 ball hamyoningizga qo'shildi.", parse_mode="Markdown")
-    else:
-        await callback.message.edit_text(f"💔 *YUTQAZDINGIZ!* To'g'ri javob: {correct_ans} edi.\n\nYana urinib ko'rasizmi?", parse_mode="Markdown")
     
+    if user_id not in users_db: users_db[user_id] = {"balance": 0}
+    
+    user_balance = users_db[user_id]["balance"]
+    
+    if user_balance >= item["price"]:
+        users_db[user_id]["balance"] -= item["price"]
+        text = (
+            f"✅ *Xarid muvaffaqiyatli amalga oshdi!*\n\n"
+            f"📦 *Material:* {item['name']}\n"
+            f"🔗 *Yuklab olish havolasi:* [SHU YERNI BOSING]({item['link']})\n\n"
+            f"💰 *Qolgan balansingiz:* `{users_db[user_id]['balance']} so'm`"
+        )
+        await callback.message.edit_text(text, parse_mode="Markdown")
+    else:
+        text = (
+            f"❌ *Mablag' yetarli emas!*\n\n"
+            f"Narxi: `{item['price']} so'm`\n"
+            f"Sizda: `{user_balance} so'm` bor.\n\n"
+            "Pul ishlash uchun do'stlarni taklif qiling yoki hamyoningizni to'ldiring."
+        )
+        await callback.message.edit_text(text, parse_mode="Markdown")
     await callback.answer()
-
-# --- QOLGAN BO'LIMLAR ---
-@dp.message(F.text == "📚 Maktab Darsliklari")
-async def books(message: types.Message):
-    await message.answer("📚 Darsliklar bo'limi yangilanmoqda...")
 
 @dp.message(F.text == "💰 Hamyon")
 async def wallet(message: types.Message):
-    u = users_db.get(message.from_user.id, {"balance": 0})
-    await message.answer(f"💰 *Balans:* `{u['balance']} ball`", parse_mode="Markdown")
+    balance = users_db.get(message.from_user.id, {"balance": 0})["balance"]
+    await message.answer(f"💳 *Sizning balansingiz:* `{balance} so'm`", parse_mode="Markdown")
 
-# --- RENDER SERVER ---
+# --- RENDER WEB SERVER ---
 class H(BaseHTTPRequestHandler):
     def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"OK")
     def log_message(self, *a): pass
