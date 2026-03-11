@@ -2,93 +2,121 @@ import asyncio
 import os
 import logging
 import threading
-import random
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.request import urlopen
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
+from aiogram.types import LabeledPrice, PreCheckoutQuery
 
 logging.basicConfig(level=logging.INFO)
 
+# --- KONFIGURATSIYA ---
 TOKEN = os.environ.get("BOT_TOKEN")
+# Bu yerga @BotFather dan olingan CLICK yoki PAYME tokeningizni qo'ying
+PAYMENT_PROVIDER_TOKEN = "399304918:TEST:92243" # TEST TOKEN (Placeholder)
 RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 users_db = {} 
 
-# --- PULLIK MATERIALLAR BAZASI ---
+# --- MARKET BAZASI ---
 PREMIUM_MATERIALS = {
-    "math_pro": {"name": "📐 Matematika: 7-sinf 'Funksiyalar' ochiq dars", "price": 5000, "link": "https://prezi.com/math-open-lesson"},
-    "phys_pro": {"name": "🧲 Fizika: 9-sinf 'Magnit maydoni' tayyor slayd", "price": 7000, "link": "https://slideshare.com/physics-9"},
-    "eng_pro": {"name": "🇬🇧 English: Grade 5 'My Family' creative lesson", "price": 4000, "link": "https://google.com/drive/eng-5"}
+    "math_pro": {"name": "📐 Matematika: Ochiq dars", "price": 5000, "link": "https://edu.uz/math"},
+    "phys_pro": {"name": "🧲 Fizika: Tayyor slayd", "price": 7000, "link": "https://edu.uz/phys"}
 }
 
-# --- MENU ---
+# --- ASOSIY MENYU ---
 def main_menu():
     builder = ReplyKeyboardBuilder()
-    builder.row(types.KeyboardButton(text="👨‍🏫 O'qituvchilar (Pullik materiallar)"))
-    builder.row(types.KeyboardButton(text="🎮 Interaktiv O'yin-Darslar"))
-    builder.row(types.KeyboardButton(text="📚 Maktab Darsliklari"), types.KeyboardButton(text="🧠 Bilim Sinash"))
-    builder.row(types.KeyboardButton(text="💰 Hamyon"), types.KeyboardButton(text="💎 VIP Bo'lim"))
-    builder.row(types.KeyboardButton(text="👫 Do'stlarni taklif qilish"))
+    builder.row(types.KeyboardButton(text="👨‍🏫 O'qituvchilar (Market)"))
+    builder.row(types.KeyboardButton(text="💰 Hamyonni to'ldirish (CLICK/PAYME)"))
+    builder.row(types.KeyboardButton(text="💳 Balansni tekshirish"), types.KeyboardButton(text="🎮 O'yinlar"))
+    builder.row(types.KeyboardButton(text="👫 Referallar"))
     return builder.as_markup(resize_keyboard=True)
 
 # --- START ---
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
-    if user_id not in users_db: users_db[user_id] = {"balance": 1000} # Bonus 1000 so'm yangi foydalanuvchiga
-    await message.answer("🎓 *Milliy Ta'lim va Biznes Platformasi!*\n\nProfessional ochiq darslar va metodik qo'llanmalar bo'limi ochildi!", parse_mode="Markdown", reply_markup=main_menu())
+    if user_id not in users_db: users_db[user_id] = {"balance": 1000}
+    await message.answer("🚀 *Milliy Ta'lim Platformasi - Pul To'lash Tizimi Faol!*", parse_mode="Markdown", reply_markup=main_menu())
 
-# --- O'QITUVCHILAR UCHUN PULLIK BO'LIM ---
-@dp.message(F.text == "👨‍🏫 O'qituvchilar (Pullik materiallar)")
-async def show_premium(message: types.Message):
-    builder = InlineKeyboardBuilder()
-    for key, item in PREMIUM_MATERIALS.items():
-        builder.row(types.InlineKeyboardButton(text=f"{item['name']} - {item['price']} so'm", callback_data=f"buy_{key}"))
-    await message.answer("💎 *EKSKLUZIV MATERIALLAR:*\n\nKerakli ochiq dars materialini tanlang. Sotib olganingizdan so'ng yuklab olish havolasi ochiladi.", parse_mode="Markdown", reply_markup=builder.as_markup())
+# --- TO'LOV TIZIMI (CLICK/PAYME) ---
+@dp.message(F.text == "💰 Hamyonni to'ldirish (CLICK/PAYME)")
+async def fill_wallet(message: types.Message):
+    await message.answer(
+        "💳 *To'lov miqdorini tanlang:*",
+        reply_markup=InlineKeyboardBuilder()
+        .row(types.InlineKeyboardButton(text="💵 5,000 so'm", callback_data="pay_5000"))
+        .row(types.InlineKeyboardButton(text="💵 10,000 so'm", callback_data="pay_10000"))
+        .row(types.InlineKeyboardButton(text="💵 20,000 so'm", callback_data="pay_20000"))
+        .as_markup()
+    )
 
-@dp.callback_query(F.data.startswith("buy_"))
-async def process_purchase(callback: types.CallbackQuery):
-    item_key = callback.data.split("_")[1]
-    item = PREMIUM_MATERIALS[item_key]
-    user_id = callback.from_user.id
+@dp.callback_query(F.data.startswith("pay_"))
+async def create_invoice(callback: types.CallbackQuery):
+    amount = int(callback.data.split("_")[1])
     
-    if user_id not in users_db: users_db[user_id] = {"balance": 0}
-    
-    user_balance = users_db[user_id]["balance"]
-    
-    if user_balance >= item["price"]:
-        users_db[user_id]["balance"] -= item["price"]
-        text = (
-            f"✅ *Xarid muvaffaqiyatli amalga oshdi!*\n\n"
-            f"📦 *Material:* {item['name']}\n"
-            f"🔗 *Yuklab olish havolasi:* [SHU YERNI BOSING]({item['link']})\n\n"
-            f"💰 *Qolgan balansingiz:* `{users_db[user_id]['balance']} so'm`"
-        )
-        await callback.message.edit_text(text, parse_mode="Markdown")
-    else:
-        text = (
-            f"❌ *Mablag' yetarli emas!*\n\n"
-            f"Narxi: `{item['price']} so'm`\n"
-            f"Sizda: `{user_balance} so'm` bor.\n\n"
-            "Pul ishlash uchun do'stlarni taklif qiling yoki hamyoningizni to'ldiring."
-        )
-        await callback.message.edit_text(text, parse_mode="Markdown")
+    await bot.send_invoice(
+        chat_id=callback.from_user.id,
+        title="Hamyonni to'ldirish",
+        description=f"Botdagi balansingizni {amount} so'mga to'ldirasiz.",
+        payload=f"wallet_refill_{amount}",
+        provider_token=PAYMENT_PROVIDER_TOKEN,
+        currency="UZS",
+        prices=[LabeledPrice(label="To'ldirish", amount=amount * 100)] # Telegramda tiyinlarda hisoblanadi (100 = 1 so'm)
+    )
     await callback.answer()
 
-@dp.message(F.text == "💰 Hamyon")
-async def wallet(message: types.Message):
-    balance = users_db.get(message.from_user.id, {"balance": 0})["balance"]
-    await message.answer(f"💳 *Sizning balansingiz:* `{balance} so'm`", parse_mode="Markdown")
+# To'lovdan oldin tekshirish
+@dp.pre_checkout_query()
+async def process_pre_checkout(pre_checkout_query: PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
 
-# --- RENDER WEB SERVER ---
+# To'lov muvaffaqiyatli o'tganda
+@dp.message(F.successful_payment)
+async def success_payment(message: types.Message):
+    amount = message.successful_payment.total_amount // 100
+    user_id = message.from_user.id
+    
+    if user_id not in users_db: users_db[user_id] = {"balance": 0}
+    users_db[user_id]["balance"] += amount
+    
+    await message.answer(f"✅ *Tabriklaymiz!* To'lov muvaffaqiyatli qabul qilindi. Hamyoningizga `{amount} so'm` qo'shildi.")
+
+# --- HAMYON VA BALANS ---
+@dp.message(F.text == "💳 Balansni tekshirish")
+async def check_balance(message: types.Message):
+    balance = users_db.get(message.from_user.id, {"balance": 0})["balance"]
+    await message.answer(f"💳 *Joriy balansingiz:* `{balance} so'm`", parse_mode="Markdown")
+
+# --- MARKET ---
+@dp.message(F.text == "👨‍🏫 O'qituvchilar (Market)")
+async def school_market(message: types.Message):
+    builder = InlineKeyboardBuilder()
+    for k, v in PREMIUM_MATERIALS.items():
+        builder.row(types.InlineKeyboardButton(text=f"{v['name']} ({v['price']} so'm)", callback_data=f"buy_{k}"))
+    await message.answer("🛒 *Market:*", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data.startswith("buy_"))
+async def purchase(callback: types.CallbackQuery):
+    key = callback.data.split("_")[1]
+    item = PREMIUM_MATERIALS[key]
+    u_id = callback.from_user.id
+    
+    if users_db.get(u_id, {"balance": 0})["balance"] >= item["price"]:
+        users_db[u_id]["balance"] -= item["price"]
+        await callback.message.edit_text(f"🎁 *Sotib olindi:* {item['name']}\n🔗 [Yuklab olish]({item['link']})", parse_mode="Markdown")
+    else:
+        await callback.message.answer("❌ Balans yetarli emas. Iltimos, hamyonni to'ldiring.")
+    await callback.answer()
+
+# --- RENDER SERVER ---
 class H(BaseHTTPRequestHandler):
     def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"OK")
     def log_message(self, *a): pass
-
 def run(): HTTPServer(("0.0.0.0", int(os.environ.get("PORT", 10000))), H).serve_forever()
 
 async def main():
