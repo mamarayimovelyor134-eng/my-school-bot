@@ -13,14 +13,16 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 logging.basicConfig(level=logging.INFO)
 TOKEN = os.environ.get("BOT_TOKEN")
 RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
-ADMIN_ID = 5153243178  # O'zingizning Telegram ID'ingizni shu yerga yozing (Hozircha placeholder)
+
+# Render'da ma'lumotlar bazasi yo'lini to'g'irlash
+DB_PATH = os.path.join(os.getcwd(), "users.db")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 # --- MA'LUMOTLAR BAZASI ---
 async def init_db():
-    async with aiosqlite.connect("users.db") as db:
+    async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -33,7 +35,7 @@ async def init_db():
         """)
         await db.commit()
 
-# --- KLAVIATURALAR (PRO DESIGN) ---
+# --- KLAVIATURALAR ---
 def main_menu():
     builder = ReplyKeyboardBuilder()
     builder.row(types.KeyboardButton(text="🤖 AI Kelajak Sherigi"), types.KeyboardButton(text="🧠 Bilim Sinash"))
@@ -41,94 +43,73 @@ def main_menu():
     builder.row(types.KeyboardButton(text="💎 VIP Bo'lim"), types.KeyboardButton(text="📞 Bog'lanish"))
     return builder.as_markup(resize_keyboard=True)
 
-def inline_premium():
-    builder = InlineKeyboardBuilder()
-    builder.row(types.InlineKeyboardButton(text="💎 VIP Sotib Olish (10,000 so'm)", callback_data="buy_vip"))
-    builder.row(types.InlineKeyboardButton(text="📢 Reklama xizmati", callback_data="buy_ad"))
-    return builder.as_markup()
-
 # --- HANDLERLAR ---
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     user_id = message.from_user.id
     username = message.from_user.username or "foydalanuvchi"
     
-    # Referall tekshirish
     args = message.text.split()
     referrer_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
 
-    async with aiosqlite.connect("users.db") as db:
-        # Foydalanuvchi bormi?
-        cursor = await db.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
-        if not await cursor.fetchone():
-            await db.execute("INSERT INTO users (user_id, username, referrer_id) VALUES (?, ?, ?)", 
-                             (user_id, username, referrer_id))
-            if referrer_id:
-                await db.execute("UPDATE users SET balance = balance + 500 WHERE user_id = ?", (referrer_id,))
-                try:
-                    await bot.send_message(referrer_id, f"🎉 Tabriklaymiz! Dostingiz @{username} taklifingiz bilan kirdi. Sizga 500 so'm bonus berildi!")
-                except: pass
-            await db.commit()
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+            if not await cursor.fetchone():
+                await db.execute("INSERT INTO users (user_id, username, referrer_id) VALUES (?, ?, ?)", 
+                                 (user_id, username, referrer_id))
+                if referrer_id:
+                    await db.execute("UPDATE users SET balance = balance + 500 WHERE user_id = ?", (referrer_id,))
+                    try:
+                        await bot.send_message(referrer_id, f"🎉 Tabriklaymiz! Dostingiz @{username} taklifingiz bilan kirdi. Sizga 500 so'm bonus berildi!")
+                    except: pass
+                await db.commit()
+    except Exception as e:
+        logging.error(f"DB Error: {e}")
 
     welcome_text = (
         f"🌟 *Assalomu Alaykum, @{username}!*\n\n"
         "Siz O'zbekistondagi eng zamonaviy va aqlli *AI Bot* platformasiga xush kelibsiz!\n\n"
-        "🔹 *Nimalar qila olamiz?*\n"
-        "➕ Dunyodagi har qanday savolga javob beraman\n"
-        "➕ Sizga passiv daromad topish imkonini beraman\n"
-        "➕ Professional testlar to'plami bilan bilimingizni charxlayman\n\n"
         "🚀 *Keling, kelajakni birga quramiz!*"
     )
     await message.answer(welcome_text, parse_mode="Markdown", reply_markup=main_menu())
 
 @dp.message(F.text == "💰 Mening Hamyonim")
 async def wallet(message: types.Message):
-    async with aiosqlite.connect("users.db") as db:
-        cursor = await db.execute("SELECT balance, is_vip FROM users WHERE user_id = ?", (message.from_user.id,))
-        row = await cursor.fetchone()
-        balance = row[0] if row else 0
-        vip_status = "✅ Aktiv" if row and row[1] else "❌ Aktiv emas"
+    balance = 0
+    vip_status = "❌ Aktiv emas"
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute("SELECT balance, is_vip FROM users WHERE user_id = ?", (message.from_user.id,))
+            row = await cursor.fetchone()
+            if row:
+                balance, is_vip = row
+                vip_status = "✅ Aktiv" if is_vip else "❌ Aktiv emas"
+    except: pass
 
-        text = (
-            "🏦 *Sizning Shaxsiy Kabinetingiz*\n\n"
-            f"💵 *ID:* `{message.from_user.id}`\n"
-            f"💰 *Joriy Balans:* `{balance} so'm`\n"
-            f"🏆 *VIP Status:* {vip_status}\n\n"
-            "💡 *Passiv daromad:* Har bir taklif qilgan do'stingiz uchun sizga *500 so'm* avtomatik tushadi!"
-        )
-        await message.answer(text, parse_mode="Markdown")
+    text = (
+        "🏦 *Sizning Shaxsiy Kabinetingiz*\n\n"
+        f"💵 *ID:* `{message.from_user.id}`\n"
+        f"💰 *Joriy Balans:* `{balance} so'm`\n"
+        f"🏆 *VIP Status:* {vip_status}\n\n"
+        "💡 *Passiv daromad:* Har bir taklif qilgan do'stingiz uchun sizga *500 so'm* avtomatik tushadi!"
+    )
+    await message.answer(text, parse_mode="Markdown")
 
 @dp.message(F.text == "👫 Do'stlarni taklif qilish")
 async def invite(message: types.Message):
     bot_info = await bot.get_me()
     invite_link = f"https://t.me/{bot_info.username}?start={message.from_user.id}"
-    text = (
-        "🔗 *Sizning maxsus referall havolangiz:*\n\n"
-        f"{invite_link}\n\n"
-        "Ushbu havolani do'stingizga yuboring va har bir kirgan do'stingiz uchun *500 so'm* sovg'aga ega bo'ling! ✨"
-    )
-    await message.answer(text, parse_mode="Markdown")
-
-@dp.message(F.text == "💎 VIP Bo'lim")
-async def vip_section(message: types.Message):
-    await message.answer(
-        "💎 *VIP imkoniyatlar dunyosi!*\n\n"
-        "VIP foydalanuvchilar quyidagilarga ega bo'lishadi:\n"
-        "✅ Cheksiz AI muloqot\n"
-        "✅ Reklamasiz foydalanish\n"
-        "✅ Barcha pullik testlar BEPUL!\n\n"
-        "Kelajakda bu yerda pullik kurslar va maxsus qo'llanmalar sotiladi.",
-        parse_mode="Markdown", reply_markup=inline_premium()
-    )
+    await message.answer(f"🔗 *Taklif havolangiz:*\n\n{invite_link}", parse_mode="Markdown")
 
 @dp.message(F.text == "🤖 AI Kelajak Sherigi")
 async def ai_handler(message: types.Message):
-    await message.answer("🤖 *Sun'iy intellekt rejimi yoqildi!*\n\nSavolingizni yozib qoldiring, men sizga yordam berishga tayyorman...", parse_mode="Markdown")
+    await message.answer("🤖 *Sun'iy intellekt rejimi yoqildi!*\n\nSavolingizni yozing...")
 
-# --- SERVER VA KEEP-ALIVE (RENDER UCHUN) ---
+# --- RENDER KEEP-ALIVE ---
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200); self.end_headers(); self.wfile.write(b"ALIVE")
+        self.send_response(200); self.end_headers(); self.wfile.write(b"OK")
     def log_message(self, *a): pass
 
 def run_web():
