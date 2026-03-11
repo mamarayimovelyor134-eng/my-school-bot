@@ -62,7 +62,7 @@ def self_ping():
                 logging.info("Self-ping muvaffaqiyatli!")
         except Exception as e:
             logging.error(f"Self-ping xatosi: {e}")
-        time.sleep(300) # Har 5 daqiqada
+        time.sleep(240) # Har 4 daqiqada (ishonchliroq)
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
