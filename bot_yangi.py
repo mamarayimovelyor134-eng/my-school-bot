@@ -31,31 +31,78 @@ def sql(query):
         query = query.replace('AUTOINCREMENT', '')
     return query
 
+# --- DATABASE POOL ---
+db_pool = None
+
+async def init_db():
+    global db_pool
+    # PostgreSQL bazasini yaratish/tekshirish
+    if DB_URL:
+        try:
+            db_pool = await asyncpg.create_pool(
+                DB_URL.replace("postgres://", "postgresql://", 1),
+                min_size=1,
+                max_size=10,
+                command_timeout=15
+            )
+            logging.info("PostgreSQL pool created.")
+        except Exception as e:
+            logging.error(f"PostgreSQL pool error: {e}")
+    
+    # Jadvallarni yaratish
+    if DB_URL:
+        await db_exec("CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, username TEXT, reg_date TEXT)")
+        await db_exec("CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, user_id BIGINT, task_text TEXT, remind_time TEXT, created_at TEXT, is_done BOOLEAN DEFAULT FALSE)")
+    else:
+        await db_exec("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, reg_date TEXT)")
+        await db_exec("CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, task_text TEXT, remind_time TEXT, created_at TEXT, is_done BOOLEAN DEFAULT 0)")
+    logging.info("Database tables verified.")
+
 async def db_exec(query, *args):
     query = sql(query)
-    if DB_URL:
-        conn = await asyncpg.connect(DB_URL.replace("postgres://", "postgresql://", 1))
-        await conn.execute(query, *args)
-        await conn.close()
-    else:
-        async with aiosqlite.connect(DB_FILE) as db:
-            await db.execute(query, *args)
-            await db.commit()
+    try:
+        if DB_URL:
+            # Pool orqali ulanyapmiz
+            if db_pool:
+                async with db_pool.acquire() as conn:
+                    await conn.execute(query, *args)
+            else:
+                conn = await asyncpg.connect(DB_URL.replace("postgres://", "postgresql://", 1))
+                await conn.execute(query, *args)
+                await conn.close()
+        else:
+            async with aiosqlite.connect(DB_FILE) as db:
+                await db.execute(query, *args)
+                await db.commit()
+    except Exception as e:
+        logging.error(f"DB Exec Error: {e} | Query: {query}")
 
 async def db_fetch(query, *args, one=False):
     query = sql(query)
-    if DB_URL:
-        conn = await asyncpg.connect(DB_URL.replace("postgres://", "postgresql://", 1))
-        if one:
-            res = await conn.fetchrow(query, *args)
+    try:
+        if DB_URL:
+            if db_pool:
+                async with db_pool.acquire() as conn:
+                    if one:
+                        return await conn.fetchrow(query, *args)
+                    return await conn.fetch(query, *args)
+            else:
+                conn = await asyncpg.connect(DB_URL.replace("postgres://", "postgresql://", 1))
+                if one:
+                    res = await conn.fetchrow(query, *args)
+                else:
+                    res = await conn.fetch(query, *args)
+                await conn.close()
+                return res
         else:
-            res = await conn.fetch(query, *args)
-        await conn.close()
-        return res
-    else:
-        async with aiosqlite.connect(DB_FILE) as db:
-            async with db.execute(query, *args) as cursor:
-                return await cursor.fetchone() if one else await cursor.fetchall()
+            async with aiosqlite.connect(DB_FILE) as db:
+                async with db.execute(query, *args) as cursor:
+                    if one:
+                        return await cursor.fetchone()
+                    return await cursor.fetchall()
+    except Exception as e:
+        logging.error(f"DB Fetch Error: {e} | Query: {query}")
+        return None
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -195,14 +242,7 @@ async def solve_test_from_image(image_buffer: bytes) -> str:
     return "❌ Rasmni o'qib bo'lmadi. Server javob bermayotgan bo'lishi mumkin."
 
 
-async def init_db():
-    # PostgreSQL BIGINT va SERIAL ishlatadi, SQLite esa INTEGER PRIMARY KEY
-    if DB_URL:
-        await db_exec("CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, username TEXT, reg_date TEXT)")
-        await db_exec("CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, user_id BIGINT, task_text TEXT, remind_time TEXT, created_at TEXT, is_done BOOLEAN DEFAULT FALSE)")
-    else:
-        await db_exec("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, reg_date TEXT)")
-        await db_exec("CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, task_text TEXT, remind_time TEXT, created_at TEXT, is_done BOOLEAN DEFAULT 0)")
+# Database initialization moved to helper functions
 
 
 # update_balance funksiyasi olib tashlandi
@@ -393,7 +433,10 @@ def main_menu():
 
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
-    await add_user(message.from_user.id, message.from_user.username)
+    try:
+        await add_user(message.from_user.id, message.from_user.username)
+    except Exception as e:
+        logging.error(f"Error in start_cmd (add_user): {e}")
     
     welcome_text = (
         "👋 *Salom, aziz o'quvchi!* \n\n"
@@ -502,6 +545,35 @@ async def admin_panel(message: types.Message):
         f"📝 Jami vazifalar: `{total_tasks}` ta"
     )
     await message.answer(text, parse_mode="Markdown")
+
+@dp.message(Command("status"))
+async def status_cmd(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    status_text = "📊 *BOT STATUSI:*\n\n"
+    
+    # DB test
+    try:
+        if DB_URL:
+            status_text += "🗄 Baza: `PostgreSQL`\n"
+            if db_pool:
+                status_text += "✅ Pool: `Faol`\n"
+            else:
+                status_text += "⚠️ Pool: `Yaratilmagan`\n"
+        else:
+            status_text += "🗄 Baza: `SQLite (Lokal)`\n"
+        
+        test_res = await db_fetch("SELECT 1", one=True)
+        if test_res:
+            status_text += "✅ Bog'lanish: `OK`\n"
+        else:
+            status_text += "❌ Bog'lanish: `XATO`\n"
+    except Exception as e:
+        status_text += f"❌ DB Xatolik: `{e}`\n"
+    
+    status_text += f"\n⏰ Hozirgi vaqt: `{datetime.now().strftime('%H:%M:%S')}`"
+    await message.answer(status_text, parse_mode="Markdown")
 
 # Reklama funksiyasi o'chirildi
 
@@ -842,6 +914,16 @@ async def handle_free_text(message: types.Message):
     else:
         if not message.text.startswith("/"):
             await message.answer("Iltimos, menyudan kerakli bo'limni tanlang 👇", reply_markup=main_menu())
+
+# --- ERROR HANDLER ---
+@dp.errors()
+async def error_handler(event: types.ErrorEvent):
+    logging.exception(f"Unhandled exception: {event.exception}")
+    try:
+        if event.update.message:
+            await event.update.message.answer("❌ Xatolik yuz berdi. Iltimos, birozdan so'ng qayta urinib ko'ring.")
+    except:
+        pass
 
 async def set_commands(bot: Bot):
     commands = [
