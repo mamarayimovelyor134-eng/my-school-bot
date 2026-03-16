@@ -822,6 +822,18 @@ async def set_commands(bot: Bot):
     ]
     await bot.set_my_commands(commands)
 
+async def self_ping():
+    """Bot uxlab qolmasligi uchun o'z-o'ziga so'rov yuboradi"""
+    url = "https://zukko-yordamchi.onrender.com"
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    logging.info(f"Self-ping sent to {url}. Status: {resp.status}")
+        except Exception as e:
+            logging.error(f"Self-ping failed: {e}")
+        await asyncio.sleep(600)  # Har 10 daqiqada (600 soniya)
+
 async def handle(request):
     """Render health check uchun oddiy sahifa"""
     return web.Response(text="Bot is running! 🚀")
@@ -843,6 +855,9 @@ async def main():
 
     # Reminder tizimini fonda ishga tushirish
     asyncio.create_task(reminder_loop())
+    
+    # Self-ping tizimini fonda ishga tushirish (Render uchun)
+    asyncio.create_task(self_ping())
     
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
