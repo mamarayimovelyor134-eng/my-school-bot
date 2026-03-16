@@ -839,28 +839,38 @@ async def handle(request):
     return web.Response(text="Bot is running! 🚀")
 
 async def main():
-    await init_db()
-    # Rasmiy buyruqlar menyusini o'rnatish
-    await set_commands(bot)
-    
-    # Render'da bot o'chib qolmasligi uchun kichik Web Server
-    app = web.Application()
-    app.router.add_get("/", handle)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.environ.get("PORT", 8080))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    asyncio.create_task(site.start())
-    logging.info(f"Web server started on port {port}")
+    try:
+        logging.info("Starting bot initialization...")
+        await init_db()
+        # Rasmiy buyruqlar menyusini o'rnatish
+        await set_commands(bot)
+        logging.info("Database and commands initialized.")
+    except Exception as e:
+        logging.error(f"Initialization error: {e}")
 
-    # Reminder tizimini fonda ishga tushirish
+    # Render'da bot o'chib qolmasligi uchun kichik Web Server
+    try:
+        app = web.Application()
+        app.router.add_get("/", handle)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        port = int(os.environ.get("PORT", 8080))
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
+        logging.info(f"Web server started on port {port}")
+    except Exception as e:
+        logging.error(f"Web server startup error: {e}")
+
+    # Reminder va Self-ping fonda
     asyncio.create_task(reminder_loop())
-    
-    # Self-ping tizimini fonda ishga tushirish (Render uchun)
     asyncio.create_task(self_ping())
     
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    try:
+        logging.info("Starting polling...")
+        await bot.delete_webhook(drop_pending_updates=True)
+        await dp.start_polling(bot)
+    except Exception as e:
+        logging.error(f"Polling error: {e}")
 
 
 if __name__ == "__main__":
