@@ -9,16 +9,53 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 import aiosqlite
+import asyncpg
 from aiohttp import web
 
 logging.basicConfig(level=logging.INFO)
 
-# --- CONFIG (Xavfsizlik uchun Environment Variables ishlatiladi) ---
+# --- CONFIG ---
 TOKEN = os.environ.get("BOT_TOKEN", "8213419235:AAExR7swbjYl18CnGtJUzemWuw694-X2VMQ")
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "6363231317"))
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+DB_URL = os.environ.get("DATABASE_URL") # PostgreSQL URL (masalan, Supabase yoki Neon)
 DB_FILE = "school_bot.db"
 
+# SQL dialect helper: ? -> $1, $2... (PostgreSQL uchun)
+def sql(query):
+    if DB_URL:
+        placeholder_count = query.count('?')
+        for i in range(1, placeholder_count + 1):
+            query = query.replace('?', f'${i}', 1)
+        # PostgreSQL AUTOINCREMENT o'rniga SERIAL ishlatadi
+        query = query.replace('AUTOINCREMENT', '')
+    return query
+
+async def db_exec(query, *args):
+    query = sql(query)
+    if DB_URL:
+        conn = await asyncpg.connect(DB_URL.replace("postgres://", "postgresql://", 1))
+        await conn.execute(query, *args)
+        await conn.close()
+    else:
+        async with aiosqlite.connect(DB_FILE) as db:
+            await db.execute(query, *args)
+            await db.commit()
+
+async def db_fetch(query, *args, one=False):
+    query = sql(query)
+    if DB_URL:
+        conn = await asyncpg.connect(DB_URL.replace("postgres://", "postgresql://", 1))
+        if one:
+            res = await conn.fetchrow(query, *args)
+        else:
+            res = await conn.fetch(query, *args)
+        await conn.close()
+        return res
+    else:
+        async with aiosqlite.connect(DB_FILE) as db:
+            async with db.execute(query, *args) as cursor:
+                return await cursor.fetchone() if one else await cursor.fetchall()
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -159,22 +196,22 @@ async def solve_test_from_image(image_buffer: bytes) -> str:
 
 
 async def init_db():
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, reg_date TEXT)")
-        await db.execute("CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, task_text TEXT, remind_time TEXT, created_at TEXT, is_done BOOLEAN DEFAULT 0)")
-        await db.commit()
+    # PostgreSQL BIGINT va SERIAL ishlatadi, SQLite esa INTEGER PRIMARY KEY
+    if DB_URL:
+        await db_exec("CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, username TEXT, reg_date TEXT)")
+        await db_exec("CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, user_id BIGINT, task_text TEXT, remind_time TEXT, created_at TEXT, is_done BOOLEAN DEFAULT FALSE)")
+    else:
+        await db_exec("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, reg_date TEXT)")
+        await db_exec("CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, task_text TEXT, remind_time TEXT, created_at TEXT, is_done BOOLEAN DEFAULT 0)")
 
 
 # update_balance funksiyasi olib tashlandi
 
 async def add_user(user_id, username):
     reg_date = datetime.now().strftime("%Y-%m-%d")
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,)) as cursor:
-            if not await cursor.fetchone():
-                await db.execute("INSERT INTO users (user_id, username, reg_date) VALUES (?, ?, ?)", 
-                               (user_id, username, reg_date))
-        await db.commit()
+    existing = await db_fetch("SELECT user_id FROM users WHERE user_id = ?", user_id, one=True)
+    if not existing:
+        await db_exec("INSERT INTO users (user_id, username, reg_date) VALUES (?, ?, ?)", user_id, username, reg_date)
 
 
 # --- MEGA DATA ---
@@ -329,18 +366,14 @@ FACTS_DATA = [
 async def reminder_loop():
     while True:
         now = datetime.now().strftime("%H:%M")
-        async with aiosqlite.connect(DB_FILE) as db:
-            async with db.execute("SELECT id, user_id, task_text FROM tasks WHERE remind_time = ? AND is_done = 0", (now,)) as cursor:
-                reminders = await cursor.fetchall()
-                for rid, uid, text in reminders:
-                    try:
-                        await bot.send_message(uid, f"⏰ *ESLATMA (SIGNAL)!*\n\nVazifa vaqti keldi:\n👉 *{text}*", parse_mode="Markdown")
-                        # Faqat birmarta signal berish
-                        await db.execute("UPDATE tasks SET remind_time = NULL WHERE id = ?", (rid,))
-                    except:
-                        pass
-            await db.commit()
-        await asyncio.sleep(60) # Har daqiqada tekshirish
+        reminders = await db_fetch("SELECT id, user_id, task_text FROM tasks WHERE remind_time = ? AND is_done = ?", now, False if DB_URL else 0)
+        for rid, uid, text in reminders:
+            try:
+                await bot.send_message(uid, f"⏰ *ESLATMA (SIGNAL)!*\n\nVazifa vaqti keldi:\n👉 *{text}*", parse_mode="Markdown")
+                await db_exec("UPDATE tasks SET remind_time = NULL WHERE id = ?", rid)
+            except:
+                pass
+        await asyncio.sleep(60)
 
 # --- UI ---
 def main_menu():
@@ -457,11 +490,11 @@ async def admin_panel(message: types.Message):
     if message.from_user.id != ADMIN_ID:
         return
     
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("SELECT COUNT(*) FROM users") as c1:
-            total_users = (await c1.fetchone())[0]
-        async with db.execute("SELECT COUNT(*) FROM tasks") as c2:
-            total_tasks = (await c2.fetchone())[0]
+    count_users = await db_fetch("SELECT COUNT(*) FROM users")
+    count_tasks = await db_fetch("SELECT COUNT(*) FROM tasks")
+    
+    total_users = count_users[0][0]
+    total_tasks = count_tasks[0][0]
             
     text = (
         "👨‍💻 *ADMIN PANELI*\n\n"
@@ -714,9 +747,8 @@ def get_sand_glass(created_at, remind_time):
 
 @dp.message(F.text == "📝 Vazifalarim")
 async def show_tasks(message: types.Message):
-    async with aiosqlite.connect(DB_FILE) as db:
-        async with db.execute("SELECT id, task_text, remind_time, created_at FROM tasks WHERE user_id = ? AND is_done = 0", (message.from_user.id,)) as cursor:
-            tasks = await cursor.fetchall()
+    tasks = await db_fetch("SELECT id, task_text, remind_time, created_at FROM tasks WHERE user_id = ? AND is_done = ?", 
+                           message.from_user.id, False if DB_URL else 0)
     
     if not tasks:
         await message.answer("📝 *Vazifalar yo'q.*\n\nQo'shish: `vazifa dars @ 19:00`", parse_mode="Markdown")
@@ -734,9 +766,7 @@ async def show_tasks(message: types.Message):
 @dp.callback_query(F.data.startswith("done_"))
 async def mark_task_done(callback: types.CallbackQuery):
     task_id = int(callback.data.split("_")[1])
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute("UPDATE tasks SET is_done = 1 WHERE id = ?", (task_id,))
-        await db.commit()
+    await db_exec("UPDATE tasks SET is_done = ? WHERE id = ?", True if DB_URL else 1, task_id)
     await callback.answer("✅ Bajarildi!")
     await callback.message.delete()
 
@@ -751,9 +781,8 @@ async def add_task_cmd(message: types.Message):
         text = parts[0].strip()
         remind_time = parts[1].strip()
 
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute("INSERT INTO tasks (user_id, task_text, remind_time, created_at) VALUES (?, ?, ?, ?)", (message.from_user.id, text, remind_time, created_at))
-        await db.commit()
+    await db_exec("INSERT INTO tasks (user_id, task_text, remind_time, created_at) VALUES (?, ?, ?, ?)", 
+                  message.from_user.id, text, remind_time, created_at)
     
     msg = f"✅ Saqlandi: *{text}*"
     if remind_time: msg += f"\n⌛ Qum soati ishga tushdi: *{remind_time}*"
