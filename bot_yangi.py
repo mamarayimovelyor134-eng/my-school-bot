@@ -832,7 +832,7 @@ async def self_ping():
                     logging.info(f"Self-ping sent to {url}. Status: {resp.status}")
         except Exception as e:
             logging.error(f"Self-ping failed: {e}")
-        await asyncio.sleep(600)  # Har 10 daqiqada (600 soniya)
+        await asyncio.sleep(300)  # Har 5 daqiqada (300 soniya)
 
 async def handle(request):
     """Render health check uchun oddiy sahifa"""
