@@ -1,7 +1,9 @@
+school_bot.db
 __pycache__/
 *.pyc
 .env
-venv/
-env/
-.idea/
-.vscode/
+error.log
+error.txt
+compile_error.txt
+out2.txt
+debug_compile.py
