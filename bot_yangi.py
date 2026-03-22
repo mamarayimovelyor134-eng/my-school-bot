@@ -6,62 +6,69 @@ import aiohttp
 import base64
 import urllib.parse
 from datetime import datetime
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher, types, F, exceptions
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
 import aiosqlite
 import asyncpg
 from aiohttp import web
+from dotenv import load_dotenv
+
+# --- LOAD CONFIG ---
+load_dotenv()
 
 # --- LOGGING ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # --- CONFIG ---
-TOKEN = os.environ.get("BOT_TOKEN", "8213419235:AAExR7swbjYl18CnGtJUzemWuw694-X2VMQ")
-ADMIN_ID = int(os.environ.get("ADMIN_ID", "6363231317"))
+TOKEN = os.environ.get("BOT_TOKEN")
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-DB_URL = os.environ.get("DATABASE_URL")  # PostgreSQL URL (e.g. Neon, Supabase)
+DB_URL = os.environ.get("DATABASE_URL")
 DB_FILE = "school_bot.db"
-RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", "https://zukko-yordamchi.onrender.com")
+RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", "")
+
+# --- FSM STATES ---
+class BotStates(StatesGroup):
+    AI_MODE = State()
+    ADDING_TASK_TEXT = State()
+    ADDING_TASK_TIME = State()
+    ADMIN_BROADCAST = State()
 
 # --- DATABASE HELPERS ---
 db_pool = None
 
 def sql_dialect(query):
-    """SQLite (?) -> PostgreSQL ($1, $2) konvertatsiya qiladi."""
     if DB_URL:
         placeholder_count = query.count('?')
         for i in range(1, placeholder_count + 1):
             query = query.replace('?', f'${i}', 1)
         query = query.replace('AUTOINCREMENT', '')
+        query = query.replace('ON CONFLICT (user_id) DO NOTHING', 'ON CONFLICT (user_id) DO NOTHING')
     return query
 
 async def init_db():
     global db_pool
     if DB_URL:
         try:
-            # Render/Neon uchun SSL talab qilinishi mumkin
             db_pool = await asyncpg.create_pool(
                 DB_URL.replace("postgres://", "postgresql://", 1),
-                min_size=1,
-                max_size=10,
-                command_timeout=60
+                min_size=1, max_size=10
             )
-            logger.info("PostgreSQL pool faollashdi.")
+            logger.info("✅ PostgreSQL ulanishi muvaffaqiyatli.")
         except Exception as e:
-            logger.error(f"PostgreSQL ulanishda xatolik: {e}")
+            logger.error(f"❌ PostgreSQL xatosi: {e}")
 
-    # Jadvallarni yaratish
-    create_users = "CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, username TEXT, reg_date TEXT)"
+    await db_exec("CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, username TEXT, reg_date TEXT)")
     if DB_URL:
-        create_tasks = "CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, user_id BIGINT, task_text TEXT, remind_time TEXT, created_at TEXT, is_done BOOLEAN DEFAULT FALSE)"
+        await db_exec("CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, user_id BIGINT, task_text TEXT, remind_time TEXT, created_at TEXT, is_done BOOLEAN DEFAULT FALSE)")
     else:
-        create_tasks = "CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id BIGINT, task_text TEXT, remind_time TEXT, created_at TEXT, is_done BOOLEAN DEFAULT 0)"
-    
-    await db_exec(create_users)
-    await db_exec(create_tasks)
-    logger.info("Database jadvallari tekshirildi.")
+        await db_exec("CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id BIGINT, task_text TEXT, remind_time TEXT, created_at TEXT, is_done BOOLEAN DEFAULT 0)")
+    logger.info("📦 Database jadvallari tayyor.")
 
 async def db_exec(query, *args):
     query = sql_dialect(query)
@@ -71,191 +78,363 @@ async def db_exec(query, *args):
                 await conn.execute(query, *args)
         else:
             async with aiosqlite.connect(DB_FILE) as db:
-                await db.execute(query, *args)
+                await db.execute(query, args)
                 await db.commit()
     except Exception as e:
-        logger.error(f"DB Exec Error: {e} | Query: {query}")
+        logger.error(f"❌ DB Exec Error: {e}")
 
 async def db_fetch(query, *args, one=False):
     query = sql_dialect(query)
     try:
         if DB_URL and db_pool:
             async with db_pool.acquire() as conn:
-                if one:
-                    return await conn.fetchrow(query, *args)
+                if one: return await conn.fetchrow(query, *args)
                 return await conn.fetch(query, *args)
         else:
             async with aiosqlite.connect(DB_FILE) as db:
-                async with db.execute(query, *args) as cursor:
-                    if one:
-                        return await cursor.fetchone()
+                async with db.execute(query, args) as cursor:
+                    if one: return await cursor.fetchone()
                     return await cursor.fetchall()
     except Exception as e:
-        logger.error(f"DB Fetch Error: {e} | Query: {query}")
+        logger.error(f"❌ DB Fetch Error: {e}")
         return None
 
-# --- AI HELPERS ---
-async def ask_gemini(question: str) -> str:
-    clean_question = question.split("Masalan:")[-1].replace("•", "").strip() or question
+# --- AI & CONTENT DATA ---
+async def ask_ai(question: str, image_b64: str = None) -> str:
     if GEMINI_API_KEY:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-        payload = {"contents": [{"parts": [{"text": clean_question}]}]}
+        parts = [{"text": question}]
+        if image_b64:
+            parts.append({"inline_data": {"mime_type": "image/jpeg", "data": image_b64}})
+        payload = {"contents": [{"parts": parts}]}
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, timeout=30) as resp:
+                async with session.post(url, json=payload, timeout=25) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         return data["candidates"][0]["content"]["parts"][0]["text"]
         except: pass
-    return await ask_pollinations(clean_question)
-
-async def ask_pollinations(question: str) -> str:
-    system = "Sen o'zbek maktab o'quvchilariga yordam beruvchi AI assistantsan. Faqat o'zbek tilida javob ber."
-    encoded = urllib.parse.quote(question)
-    url = f"https://text.pollinations.ai/{encoded}?model=openai&system={urllib.parse.quote(system)}&json=false"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=30) as resp:
-                if resp.status == 200: return await resp.text()
-    except: pass
-    return "❌ AI bilan bog'lanishda muammo bo'ldi."
-
-async def solve_test_from_image(image_buffer: bytes) -> str:
-    img_b64 = base64.b64encode(image_buffer).decode("utf-8")
-    if GEMINI_API_KEY:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-        payload = {
-            "contents": [{"parts": [
-                {"text": "Ushbu rasmdagi savol/testni tahlil qil va o'zbek tilida yechib ber."},
-                {"inline_data": {"mime_type": "image/jpeg", "data": img_b64}}
-            ]}]
-        }
+    
+    if not image_b64:
+        system = "Sen o'zbek maktab o'quvchilariga yordam beruvchi aqlli AI yordamchisan."
+        url = f"https://text.pollinations.ai/{urllib.parse.quote(question)}?model=openai&system={urllib.parse.quote(system)}&json=false"
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, timeout=30) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return data["candidates"][0]["content"]["parts"][0]["text"]
+                async with session.get(url, timeout=20) as resp:
+                    if resp.status == 200: return await resp.text()
         except: pass
-    return "❌ Rasmni o'qishda xatolik."
+    return "❌ Uzr, hozircha bu so'rovni bajarib bo'lmaydi."
 
-# --- DATA ---
-EDUPORTAL_IDS = {"1": "8", "2": "9", "3": "13", "4": "12", "5": "14", "6": "6", "7": "7", "8": "17", "9": "18", "10": "11", "11": "19"}
-BOOKS_DATA = {str(i): [
-    ("🏛 Kitob.uz", f"https://kitob.uz/uz/library?genre=145&subgenre={145 + i}"),
-    ("📘 Eduportal", f"http://eduportal.uz/Eduportal/batafsil1/{EDUPORTAL_IDS.get(str(i))}?menu=33"),
-    ("📖 InfoEdu", f"https://infoedu.uz/category/darsliklar/{i}-sinf/"),
-] for i in range(1, 12)}
+KREATIV_DATA = [
+    ("🧩 Domino metodi", "Mavzuni tushunish uchun zanjir hosil qilish o'yini."),
+    ("💡 Aqliy hujum", "Tezkor va kreativ savol-javoblar."),
+    ("🎨 Sinkveyn", "Beshta qatordan iborat she'riy uslub."),
+    ("🔍 Klaster", "G'oyalarni jamlash uchun grafik chizish."),
+    ("🎡 Wordwall", "Interaktiv o'yinlar va qiziqarli viktorinalar yaratish platformasi.")
+]
 
-KREATIV_GAMES = {
-    "Matematika": {"🧩 Domino": "Amallar bajarish musobaqasi.", "🏁 Poyga": "Og'zaki hisob poygasi."},
-    "Ona tili": {"📝 So'z yasash": "Uzun so'zdan yangi so'zlar tuzish.", "🔍 Xato top": "Imlo xatolarini topish."},
-    "English": {"🐝 Spelling Bee": "So'zlarni harflash.", "📸 Flashcards": "Rasmli lug'at."},
-    "Tarix": {"⏳ Sayohat": "Tarixiy sanalar o'yini.", "👑 Shaxslar": "Buyuk siymolarni topish."},
-    "Metodlar": {"💡 Aqliy hujum": "Tezkor savol-javob.", "🎨 Sinkveyn": "5 qatorli she'r."}
-}
+QUIZ_DATA = [
+    {"q": "O'zbekiston poytaxti qaysi?", "o": ["Toshkent", "Samarqand", "Buxoro"], "a": "Toshkent"},
+    {"q": "2x2 necha bo'ladi?", "o": ["3", "4", "5"], "a": "4"},
+    {"q": "Inson tanasidagi eng katta a'zo?", "o": ["Jigar", "Teri", "Yurak"], "a": "Teri"}
+]
 
-STARTUP_DATA = {"🚀 Nima u?": "Innovatsion biznes loyiha.", "💡 G'oya": "Muammoga yechim toping.", "💻 IT": "Bilim oling: it-park.uz"}
-MOTIVATION_DATA = ["🌟 Ilm — najotdir!", "🚀 Eng katta sarmoya — olovingizga!", "💡 Xatolar — tajriba."]
-GAMES_DATA = [{"q": "Eng baland cho'qqi?", "a": "Everest", "o": ["Everest", "K2", "Monblan"]}]
-FACTS_DATA = ["🍯 Asal buzilmaydi.", "🐙 Qoni ko'k.", "🦒 30 daqiqa uxlashadi."]
-
-# --- BOT LOGIC ---
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
-ai_sessions = set()
-
-def main_menu():
+# --- KEYBOARDS ---
+def main_menu_kb():
     builder = ReplyKeyboardBuilder()
-    builder.row(types.KeyboardButton(text="🎨 Kreativ darslar"))
-    builder.row(types.KeyboardButton(text="📚 Darsliklar (1-11)"), types.KeyboardButton(text="🧩 Bilim testi"))
+    builder.row(types.KeyboardButton(text="🎨 Kreativ darslar"), types.KeyboardButton(text="📚 Darsliklar (1-11)"))
     builder.row(types.KeyboardButton(text="📊 BSB (Nazorat)"), types.KeyboardButton(text="📅 Taqvim rejalar"))
     builder.row(types.KeyboardButton(text="🎥 Video darslar"), types.KeyboardButton(text="📝 Onlayn testlar"))
-    builder.row(types.KeyboardButton(text="🤖 AI Yordamchi"), types.KeyboardButton(text="💡 Motivatsiya"))
-    builder.row(types.KeyboardButton(text="🌍 G'aroyib Faktlar"), types.KeyboardButton(text="📝 Vazifalarim"))
+    builder.row(types.KeyboardButton(text="🤖 AI Yordamchi"), types.KeyboardButton(text="🧩 Bilim testi"))
+    builder.row(types.KeyboardButton(text="🌍 G'aroyib Faktlar"), types.KeyboardButton(text="💡 Motivatsiya"))
+    builder.row(types.KeyboardButton(text="📝 Vazifalarim"))
     return builder.as_markup(resize_keyboard=True)
 
+def back_inline():
+    builder = InlineKeyboardBuilder()
+    builder.add(types.InlineKeyboardButton(text="🔙 Orqaga", callback_data="main_menu"))
+    return builder.as_markup()
+
+# --- HANDLERS ---
+bot = Bot(token=TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
+
 @dp.message(Command("start"))
-async def start_cmd(message: types.Message):
+async def start_cmd(message: types.Message, state: FSMContext):
+    await state.clear()
     reg_date = datetime.now().strftime("%Y-%m-%d")
     await db_exec("INSERT INTO users (user_id, username, reg_date) VALUES (?, ?, ?) ON CONFLICT (user_id) DO NOTHING", 
                   message.from_user.id, message.from_user.username, reg_date)
-    await message.answer("👋 *Salom!* 'ZUKKO YORDAMCHI'ga xush kelibsiz! 🚀", parse_mode="Markdown", reply_markup=main_menu())
+    await message.answer("🚀 *ZUKKO YORDAMCHI PILOT* botiga xush kelibsiz!\n\nBiz bilan ta'lim yanada oson va qiziqarli! 📚✨", 
+                         parse_mode="Markdown", reply_markup=main_menu_kb())
 
-@dp.message(F.text == "💡 Motivatsiya")
-async def show_motiv(m: types.Message): await m.answer(random.choice(MOTIVATION_DATA))
+# --- ADMIN PANEL ---
+@dp.message(Command("admin"))
+async def admin_panel(m: types.Message):
+    if m.from_user.id != ADMIN_ID: return
+    res = await db_fetch("SELECT COUNT(*) FROM users", one=True)
+    count = res[0] if res else 0
+    builder = InlineKeyboardBuilder()
+    builder.add(types.InlineKeyboardButton(text="📢 Hamshur xabar", callback_data="admin_broadcast"))
+    await m.answer(f"👑 *ADMIN PANEL*\n\n📊 Foydalanuvchilar soni: {count}", parse_mode="Markdown", reply_markup=builder.as_markup())
 
-@dp.message(F.text == "🌍 G'aroyib Faktlar")
-async def show_fact(m: types.Message): await m.answer(f"💡 *BILASIZMI?*\n\n{random.choice(FACTS_DATA)}", parse_mode="Markdown")
+@dp.callback_query(F.data == "admin_broadcast")
+async def broadcast_start(c: types.CallbackQuery, state: FSMContext):
+    await state.set_state(BotStates.ADMIN_BROADCAST)
+    await c.message.answer("📣 Hammaga yuboriladigan xabarni yozing:")
+    await c.answer()
+
+@dp.message(BotStates.ADMIN_BROADCAST)
+async def broadcast_send(m: types.Message, state: FSMContext):
+    users = await db_fetch("SELECT user_id FROM users")
+    await m.answer("⏳ Xabar yuborish boshlandi...")
+    sent = 0
+    for u in users:
+        try:
+            await bot.send_message(u[0], m.text)
+            sent += 1
+            await asyncio.sleep(0.05)
+        except: continue
+    await state.clear()
+    await m.answer(f"✅ Xabar {sent} ta foydalanuvchiga yetkazildi.")
+
+# --- SECTIONS ---
+@dp.message(F.text == "🎨 Kreativ darslar")
+async def show_kreativ(m: types.Message):
+    res = "🎨 *KREATIV DARSLAR VA INTERAKTIV METODLAR* \n\n"
+    res += "1. 🧩 *Domino metodi*: Mavzuni tushunish uchun zanjir hosil qilish o'yini.\n"
+    res += "2. 💡 *Aqliy hujum*: Tezkor va kreativ savol-javoblar.\n"
+    res += "3. 🎨 *Sinkveyn*: Beshta qatordan iborat she'riy uslub.\n"
+    res += "4. 🔍 *Klaster*: G'oyalarni jamlash uchun grafik chizish.\n"
+    res += "5. 🎡 *Wordwall*: Interaktiv o'yinlar va viktorinalar.\n\n"
+    res += "Qaysi yo'nalish bo'yicha yordam yoki havola kerak?"
+    
+    builder = InlineKeyboardBuilder()
+    builder.row(types.InlineKeyboardButton(text="🧩 Domino", callback_data="meth_domino"), types.InlineKeyboardButton(text="💡 Aqliy hujum", callback_data="meth_hujum"))
+    builder.row(types.InlineKeyboardButton(text="🎨 Sinkveyn", callback_data="meth_sinkveyn"), types.InlineKeyboardButton(text="🔍 Klaster", callback_data="meth_klaster"))
+    builder.row(types.InlineKeyboardButton(text="🎡 Wordwall Fanlar", callback_data="ww_subjects"))
+    builder.row(types.InlineKeyboardButton(text="🔙 Orqaga", callback_data="main_menu"))
+    await m.answer(res, parse_mode="Markdown", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data.startswith("meth_"))
+async def show_method_info(c: types.CallbackQuery):
+    meth = c.data.split('_')[1]
+    info = {
+        "domino": "🧩 *Domino metodi:*\n\nBu metodda mavzuga oid tushunchalar zanjir shaklida ulanadi. Masalan, bir o'quvchi savol beradi, keyingisi javobini aytib o'zi yangi savol qo'shadi.",
+        "hujum": "💡 *Aqliy hujum (Brainstorming):*\n\nMavzu bo'yicha har qanday g'oyalarni (hatto eng sodda bo'lsa ham) tezkor yig'ish usuli. Tanqid taqiqlanadi, faqat ko'p va kreativ g'oyalar to'planadi.",
+        "sinkveyn": "🎨 *Sinkveyn metodi:*\n\n5 qatorli she'r usuli:\n1. Mavzu (1 ta ot)\n2. Ta'rif (2 ta sifat)\n3. Harakat (3 ta fe'l)\n4. Xulosa (4 ta so'z)\n5. Sinonim (1 ta so'z)",
+        "klaster": "🔍 *Klaster (Tarmoqlar) metodi:*\n\nAsosiy tushunchani markazga yozib, unga bog'liq barcha so'z va ma'lumotlarni shoxlar ko'rinishida yozib chiqish."
+    }
+    await c.message.edit_text(info.get(meth, "Ma'lumot topilmadi."), parse_mode="Markdown", reply_markup=back_inline())
+
+@dp.callback_query(F.data == "ww_subjects")
+async def wordwall_subjects(c: types.CallbackQuery):
+    subjects = [
+        ("Matematika", "https://wordwall.net/uz/community/matematika"),
+        ("Ona tili", "https://wordwall.net/uz/community/ona-tili"),
+        ("Ingliz tili", "https://wordwall.net/uz/community/english"),
+        ("Fizika", "https://wordwall.net/uz/community/fizika"),
+        ("Biologiya", "https://wordwall.net/uz/community/biologiya"),
+        ("Tarix", "https://wordwall.net/uz/community/tarix")
+    ]
+    builder = InlineKeyboardBuilder()
+    for name, url in subjects:
+        builder.row(types.InlineKeyboardButton(text=name, url=url))
+    builder.row(types.InlineKeyboardButton(text="🔙 Orqaga", callback_data="main_menu"))
+    await c.message.edit_text("🎡 *Fanlardan birini tanlang va tayyor o'yinlarni ko'ring:*", 
+                             parse_mode="Markdown", reply_markup=builder.as_markup())
 
 @dp.message(F.text == "📚 Darsliklar (1-11)")
 async def show_grades(m: types.Message):
     builder = InlineKeyboardBuilder()
     for g in range(1, 12): builder.add(types.InlineKeyboardButton(text=f"{g}-sinf", callback_data=f"gr_{g}"))
     builder.adjust(3)
-    await m.answer("📁 *Sinfingizni tanlang:*", parse_mode="Markdown", reply_markup=builder.as_markup())
+    builder.row(types.InlineKeyboardButton(text="🔙 Bosh menyu", callback_data="main_menu"))
+    await m.answer("📚 *Sinfingizni tanlang:*", parse_mode="Markdown", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data == "main_menu")
+async def go_home(c: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await c.message.edit_text("🏠 Asosiy menyu:")
+    await c.message.answer("Foydalanishda davom eting 👇", reply_markup=main_menu_kb())
+    await c.answer()
 
 @dp.callback_query(F.data.startswith("gr_"))
 async def show_books(c: types.CallbackQuery):
     grade = c.data.split('_')[1]
     builder = InlineKeyboardBuilder()
-    for n, l in BOOKS_DATA.get(grade, []): builder.row(types.InlineKeyboardButton(text=n, url=l))
-    await c.message.edit_text(f"📚 *{grade}-sinf darsliklari:*", reply_markup=builder.as_markup())
+    # Demo data, buni BOOKS_DATA dan olish mumkin
+    builder.row(types.InlineKeyboardButton(text="🏛 Kitob.uz", url="https://kitob.uz"))
+    builder.row(types.InlineKeyboardButton(text="📘 Eduportal", url=f"http://eduportal.uz"))
+    builder.row(types.InlineKeyboardButton(text="🔙 Orqaga", callback_data="gr_list"))
+    await c.message.edit_text(f"📚 *{grade}-sinf uchun darsliklar manbalari:*", parse_mode="Markdown", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data == "gr_list")
+async def back_to_grades(c: types.CallbackQuery):
+    builder = InlineKeyboardBuilder()
+    for g in range(1, 12): builder.add(types.InlineKeyboardButton(text=f"{g}-sinf", callback_data=f"gr_{g}"))
+    builder.adjust(3)
+    builder.row(types.InlineKeyboardButton(text="🔙 Bosh menyu", callback_data="main_menu"))
+    await c.message.edit_text("📚 *Sinfingizni tanlang:*", parse_mode="Markdown", reply_markup=builder.as_markup())
+
+@dp.message(F.text == "🎥 Video darslar")
+async def show_videos(m: types.Message):
+    await m.answer("🎥 *VIDEO DARSLAR PORTALLARI* \n\n🔹 [Maktab.uz](https://maktab.uz/)\n🔹 [IT-Park YouTube](https://youtube.com/@itpark)\n🔹 [Kundalik.com](https://kundalik.com/)", 
+                   parse_mode="Markdown", reply_markup=back_inline(), disable_web_page_preview=True)
+
+@dp.message(F.text == "📝 Onlayn testlar")
+async def show_online_tests(m: types.Message):
+    await m.answer("📝 *ONLAYN TEST TOPSHIRISH* \n\n🔹 [DTM.uz](https://dtm.uz/)\n🔹 [Test.uz](https://test.uz/)\n🔹 [Prep.uz](https://prep.uz/)", 
+                   parse_mode="Markdown", reply_markup=back_inline(), disable_web_page_preview=True)
 
 @dp.message(F.text == "📊 BSB (Nazorat)")
-async def bsb_section(m: types.Message):
-    builder = InlineKeyboardBuilder()
-    for g in range(5, 12): builder.add(types.InlineKeyboardButton(text=f"{g}-sinf", callback_data=f"bsb_{g}"))
-    builder.adjust(3)
-    await m.answer("📊 *BSB bo'limi:* Sinfingizni tanlang 👇", reply_markup=builder.as_markup())
-
-@dp.callback_query(F.data.startswith("bsb_"))
-async def show_bsb(c: types.CallbackQuery):
-    grade = c.data.split('_')[1]
-    await c.message.edit_text(f"📊 *{grade}-sinf BSB bo'limi*\n\nTest rasmiga olib yuboring, AI yechib beradi! 🤖")
+async def show_bsb(m: types.Message):
+    await m.answer("📊 *BSB (Baho-Sifat-Baholash)* \n\nHozirda bu bo'limda imtihon namunalari tayyorlanmoqda. Rasm yuborsangiz AI yechib beradi! 🤖", reply_markup=back_inline())
 
 @dp.message(F.text == "📅 Taqvim rejalar")
-async def taqvim_section(m: types.Message):
-    builder = InlineKeyboardBuilder()
-    for g in range(1, 12): builder.add(types.InlineKeyboardButton(text=f"{g}-sinf", callback_data=f"taqvim_{g}"))
-    builder.adjust(3)
-    await m.answer("📅 *Taqvim-mavzu rejalar:*", reply_markup=builder.as_markup())
-
-@dp.callback_query(F.data.startswith("taqvim_"))
-async def show_taqvim(c: types.CallbackQuery):
-    await c.message.edit_text("📅 Rejalarni [Maktab.uz](https://maktab.uz/) portalidan yuklab olishingiz mumkin.", parse_mode="Markdown")
+async def show_taqvim(m: types.Message):
+    await m.answer("📅 *TAQVIM-MAVZU REJALAR* \n\nBarcha fanlar bo'yicha rejalarni [Maktab.uz](https://maktab.uz/planning) bo'limidan olishingiz mumkin.", reply_markup=back_inline(), parse_mode="Markdown")
 
 @dp.message(F.text == "🤖 AI Yordamchi")
-async def ai_cmd(m: types.Message):
-    ai_sessions.add(m.from_user.id)
-    await m.answer("🤖 *AI rejimi faollashdi!* Savolingizni yozing.", parse_mode="Markdown")
+async def ai_start(m: types.Message, state: FSMContext):
+    await state.set_state(BotStates.AI_MODE)
+    kb = ReplyKeyboardBuilder()
+    kb.add(types.KeyboardButton(text="🔙 Rejimdan chiqish"))
+    await m.answer("🤖 *ZUKKO AI REJIMI* \n\nIstalgan savolingizni yuboring, men tahlil qilaman. ✨", 
+                   reply_markup=kb.as_markup(resize_keyboard=True), parse_mode="Markdown")
 
+@dp.message(BotStates.AI_MODE, F.text == "🔙 Rejimdan chiqish")
+async def ai_exit(m: types.Message, state: FSMContext):
+    await state.clear()
+    await m.answer("Oddiy menyuga qaytdingiz.", reply_markup=main_menu_kb())
+
+@dp.message(BotStates.AI_MODE)
+async def ai_process(m: types.Message):
+    if not m.text: return
+    wait = await m.answer("⏳ _O'ylanmoqdaman..._")
+    res = await ask_ai(m.text)
+    await wait.edit_text(f"🤖 *ZUKKO JAVOBI:* \n\n{res}", parse_mode="Markdown")
+
+@dp.message(F.text == "🧩 Bilim testi")
+async def show_quiz(m: types.Message):
+    q = random.choice(QUIZ_DATA)
+    builder = InlineKeyboardBuilder()
+    for o in q['o']: builder.row(types.InlineKeyboardButton(text=o, callback_data=f"ans_{o}_{q['a']}"))
+    await m.answer(f"🧩 *SAVOL:* \n{q['q']}", reply_markup=builder.as_markup(), parse_mode="Markdown")
+
+@dp.callback_query(F.data.startswith("ans_"))
+async def check_quiz(c: types.CallbackQuery):
+    _, ans, correct = c.data.split('_')
+    if ans == correct: await c.answer("✅ To'g'ri topdingiz!", show_alert=True)
+    else: await c.answer(f"❌ Noto'g'ri. To'g'ri javob: {correct}", show_alert=True)
+    await c.message.delete()
+
+# --- TASK MANAGEMENT ---
 @dp.message(F.text == "📝 Vazifalarim")
 async def show_tasks(m: types.Message):
-    tasks = await db_fetch("SELECT task_text, remind_time FROM tasks WHERE user_id = ? AND is_done = ?", 
+    tasks = await db_fetch("SELECT id, task_text, remind_time FROM tasks WHERE user_id = ? AND is_done = ?", 
                            m.from_user.id, False if DB_URL else 0)
-    if not tasks: return await m.answer("📝 Vazifalar yo'q.")
-    res = "📝 *VAZIFALAR:* \n\n" + "\n".join([f"📌 {t[0]} ({t[1]})" for t in tasks])
-    await m.answer(res, parse_mode="Markdown")
+    builder = InlineKeyboardBuilder()
+    builder.add(types.InlineKeyboardButton(text="➕ Yangi", callback_data="add_task"))
+    if tasks: builder.add(types.InlineKeyboardButton(text="🗑 Hammasini o'chirish", callback_data="clear_tasks"))
+    
+    res = "📝 *SIZNING VAZIFALARINGIZ:* \n\n"
+    if not tasks: res += "Hozircha vazifalar yo'q. Yangi qo'shish uchun tugmani bosing. 👇"
+    else:
+        for t in tasks:
+            res += f"📌 *{t[1]}* \n⏰ Vaqt: `{t[2]}`\n/done\\_{t[0]} - Bajarildi\n\n"
+    await m.answer(res, parse_mode="Markdown", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data == "clear_tasks")
+async def clear_all_tasks(c: types.CallbackQuery):
+    await db_exec("DELETE FROM tasks WHERE user_id = ?", c.from_user.id)
+    await c.message.edit_text("✅ Barcha vazifalar o'chirildi.", reply_markup=back_inline())
+    await c.answer()
+
+@dp.callback_query(F.data == "add_task")
+async def task_init(c: types.CallbackQuery, state: FSMContext):
+    await state.set_state(BotStates.ADDING_TASK_TEXT)
+    kb = ReplyKeyboardBuilder()
+    kb.add(types.KeyboardButton(text="❌ Bekor qilish"))
+    await c.message.answer("📝 Vazifa nima? Masalan: _Matematika misollari_", reply_markup=kb.as_markup(resize_keyboard=True))
+    await c.answer()
+
+@dp.message(F.text == "❌ Bekor qilish")
+async def cancel_action(m: types.Message, state: FSMContext):
+    await state.clear()
+    await m.answer("Amal bekor qilindi.", reply_markup=main_menu_kb())
+
+@dp.message(BotStates.ADDING_TASK_TEXT)
+async def task_text_save(m: types.Message, state: FSMContext):
+    await state.update_data(txt=m.text)
+    await state.set_state(BotStates.ADDING_TASK_TIME)
+    await m.answer("⏰ Qachon eslatay? (Format: 08:00, 15:30 kamida 5 ta belgi bo'lishi kerak)")
+
+@dp.message(BotStates.ADDING_TASK_TIME)
+async def task_time_save(m: types.Message, state: FSMContext):
+    time_str = m.text.replace(".", ":").replace(" ", "").strip()
+    if ":" not in time_str:
+        if len(time_str) <= 2: time_str += ":00"
+        else: return await m.answer("❌ Noto'g'ri vaqt. Iltimos 08:00 yoki 15:30 kabi yozing!")
+    
+    data = await state.get_data()
+    now = datetime.now().strftime("%Y-%m-%d")
+    await db_exec("INSERT INTO tasks (user_id, task_text, remind_time, created_at) VALUES (?, ?, ?, ?)", 
+                  m.from_user.id, data['txt'], time_str, now)
+    await state.clear()
+    await m.answer(f"✅ Vazifa saqlandi!\n📍 {data['txt']}\n⏰ {m.text}", reply_markup=main_menu_kb())
+
+@dp.message(F.text.startswith("/done_"))
+async def mark_task_done(m: types.Message):
+    try:
+        tid = int(m.text.split('_')[1])
+        await db_exec("UPDATE tasks SET is_done = ? WHERE id = ?", True if DB_URL else 1, tid)
+        await m.answer("🎉 Barakalla! Vazifa bajarildi deb belgilandi.")
+    except: await m.answer("❌ Xatolik yuz berdi.")
+
+# --- UTILS ---
+@dp.message(F.text == "💡 Motivatsiya")
+async def show_mot(m: types.Message):
+    quotes = [
+        "🌟 Bugungi harakatingiz — ertangi muvaffaqiyatingiz poydevoridir!",
+        "🚀 To'xtab qolmang! Hatto eng kichik qadam ham sizni maqsad sari yetaklaydi.",
+        "🧠 Bilim — bu eng katta boylik. Uni hech kim sizdan tortib ololmaydi.",
+        "🔥 Iroda bo'lsa, yo'l topiladi. Harakatni hoziroq boshlang!",
+        "💎 Qiyinchiliklar sizni kuchli qiladi. Taslim bo'lish — ojizlar ishi."
+    ]
+    await m.answer(f"✨ *Siz uchun motivatsiya:*\n\n{random.choice(quotes)}", parse_mode="Markdown")
+
+@dp.message(F.text == "🌍 G'aroyib Faktlar")
+async def show_fact(m: types.Message):
+    facts = [
+        "🌍 Dunyodagi eng uzun daryo — Nil daryosi (6,650 km).",
+        "Antarktida — dunyodagi eng qurg'oqchil qit'a, u yerda 2 million yildan buyon yomg'ir yog'magan hududlar bor.",
+        "🐜 Chumolilar o'z vaznidan 50 baravar og'ir yukni ko'tara oladilar.",
+        "🐘 Fillar sakray olmaydigan yagona sutemizuvchilardir.",
+        "🌊 Dunyo okeanining faqat 5% qismi o'rganilgan.",
+        "🍯 Asal hech qachon buzilmaydigan yagona oziq-ovqat mahsulotidir.",
+        "📱 Dunyodagi birinchi mobil telefon Motorola kompaniyasi tomonidan 1973-yilda yaratilgan."
+    ]
+    await m.answer(f"🧐 *Bilasizmi?*\n\n{random.choice(facts)}", parse_mode="Markdown")
 
 @dp.message(F.photo)
-async def handle_photo(m: types.Message):
-    msg = await m.answer("⏳ _AI rasm tahlil qilinmoqda..._")
-    file = await bot.get_file(m.photo[-1].file_id)
-    buf = await bot.download_file(file.file_path)
-    res = await solve_test_from_image(buf.read())
-    await msg.edit_text(f"✅ *JAVOB:* \n\n{res}", parse_mode="Markdown")
+async def process_photo(m: types.Message):
+    wait = await m.answer("⏳ _AI rasm tahlili boshlandi..._")
+    try:
+        file = await bot.get_file(m.photo[-1].file_id)
+        buf = await bot.download_file(file.file_path)
+        img_b64 = base64.b64encode(buf.read()).decode('utf-8')
+        prompt = "Mana shu rasmda nima borligini aytib ber, va undagi savol/masalani yechib ber: " + (m.caption or "")
+        res = await ask_ai(prompt, img_b64)
+        await wait.edit_text(f"✅ *AI TAHLIL NATIJASI* \n\n{res}", parse_mode="Markdown")
+    except Exception as e:
+        await wait.edit_text(f"❌ Xatolik: {e}")
 
 @dp.message()
-async def handle_text(m: types.Message):
-    if m.from_user.id in ai_sessions:
-        msg = await m.answer("🤖 _AI o'ylanmoqda..._")
-        res = await ask_gemini(m.text)
-        await msg.edit_text(f"🤖 *AI:* \n\n{res}", parse_mode="Markdown")
-    elif not m.text.startswith("/"):
-        await m.answer("Kerakli bo'limni tanlang 👇", reply_markup=main_menu())
+async def default_echo(m: types.Message):
+    await m.answer("Pastdagi menyudan foydalaning 👇", reply_markup=main_menu_kb())
 
-# --- INFRASTRUCTURE ---
+# --- RUN ---
 async def reminder_loop():
     while True:
         now = datetime.now().strftime("%H:%M")
@@ -264,29 +443,30 @@ async def reminder_loop():
         if res:
             for r in res:
                 try:
-                    await bot.send_message(r[1], f"⏰ *Eslatma:* {r[2]}")
+                    await bot.send_message(r[1], f"⏰ *VAQT BO'LDI!* \n📌 {r[2]}")
                     await db_exec("UPDATE tasks SET is_done = ? WHERE id = ?", True if DB_URL else 1, r[0])
                 except: pass
         await asyncio.sleep(60)
 
 async def keep_alive():
-    """Render uxlab qolmasligi uchun."""
+    if not RENDER_URL: return
     while True:
         try:
             async with aiohttp.ClientSession() as s:
-                async with s.get(RENDER_URL) as r:
-                    logger.info(f"Self-ping: {r.status}")
+                async with s.get(RENDER_URL) as r: logger.info(f"Ping: {r.status}")
         except: pass
         await asyncio.sleep(300)
 
-async def handle_web(request): return web.Response(text="Bot runs! 🚀")
+async def handle_web(request): return web.Response(text="Success! 🚀")
 
 async def main():
+    if not TOKEN:
+        logger.critical("❌ BOT_TOKEN TOPILMADI!")
+        return
     await init_db()
     asyncio.create_task(reminder_loop())
     asyncio.create_task(keep_alive())
     
-    # Web server for Render health check
     app = web.Application()
     app.router.add_get("/", handle_web)
     runner = web.AppRunner(app)
