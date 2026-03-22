@@ -168,6 +168,19 @@ async def start_cmd(message: types.Message, state: FSMContext):
     await message.answer("🚀 *ZUKKO YORDAMCHI PILOT* botiga xush kelibsiz!\n\nBiz bilan ta'lim yanada oson va qiziqarli! 📚✨", 
                          parse_mode="Markdown", reply_markup=main_menu_kb())
 
+@dp.message(Command("help"))
+async def help_cmd(message: types.Message):
+    res = "❓ *YORDAM BO'LIMI*\n\n"
+    res += "🤖 *AI Yordamchi* - Savollarga javob topish va rasmlarni tahlil qilish.\n"
+    res += "🎨 *Kreativ darslar* - Interaktiv metodlar va Wordwall o'yinlari.\n"
+    res += "📝 *Vazifalarim* - Kunlik rejalaringizni eslatib turuvchi qism.\n\n"
+    res += "Muammo yuzaga kelsa, adminga murojaat qiling."
+    await message.answer(res, parse_mode="Markdown")
+
+@dp.message(Command("about"))
+async def about_cmd(message: types.Message):
+    await message.answer("🌟 *ZUKKO YORDAMCHI PILOT*\n\nUshbu bot o'qituvchilar va o'quvchilar uchun ta'lim jarayonini osonlashtirish maqsadida yaratilgan. \n\nVersiya: 2.0.0", parse_mode="Markdown")
+
 # --- ADMIN PANEL ---
 @dp.message(Command("admin"))
 async def admin_panel(m: types.Message):
@@ -293,11 +306,11 @@ async def show_online_tests(m: types.Message):
 
 @dp.message(F.text == "📊 BSB (Nazorat)")
 async def show_bsb(m: types.Message):
-    await m.answer("📊 *BSB (Baho-Sifat-Baholash)* \n\nHozirda bu bo'limda imtihon namunalari tayyorlanmoqda. Rasm yuborsangiz AI yechib beradi! 🤖", reply_markup=back_inline())
+    await m.answer("📊 *BSB (Baho-Sifat-Baholash)* \n\nUshbu bo'limda nazorat ishlari namunalari va mezonlari bilan tanishishingiz mumkin:\n\n🔹 [BSB materiallari (idum.uz)](https://idum.uz/uz/archives/category/n-i)\n\nShuningdek, savolning rasmini yuborsangiz, AI yordamida yechimini olishingiz mumkin! 🤖", reply_markup=back_inline(), parse_mode="Markdown")
 
 @dp.message(F.text == "📅 Taqvim rejalar")
 async def show_taqvim(m: types.Message):
-    await m.answer("📅 *TAQVIM-MAVZU REJALAR* \n\nBarcha fanlar bo'yicha rejalarni [Maktab.uz](https://maktab.uz/planning) bo'limidan olishingiz mumkin.", reply_markup=back_inline(), parse_mode="Markdown")
+    await m.answer("📅 *TAQVIM-MAVZU REJALAR*\n\n2024-2025 o'quv yili uchun barcha fanlardan taqvim-mavzu rejalarini quyidagi ishonchli portallardan yuklab olishingiz mumkin:\n\n🔹 [Taqvim-rejalar (idum.uz)](https://idum.uz/uz/archives/16474)\n🔹 [Taqvim-rejalar (muallimlar.uz)](https://muallimlar.uz/taqvim-reja/)\n\nFaylni yuklab olish uchun kerakli sinf va fanni tanlang.", reply_markup=back_inline(), parse_mode="Markdown")
 
 @dp.message(F.text == "🤖 AI Yordamchi")
 async def ai_start(m: types.Message, state: FSMContext):
