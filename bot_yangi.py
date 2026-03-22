@@ -230,16 +230,21 @@ async def show_method_info(c: types.CallbackQuery):
 @dp.callback_query(F.data == "ww_subjects")
 async def wordwall_subjects(c: types.CallbackQuery):
     subjects = [
-        ("Matematika", "https://wordwall.net/uz/community/matematika"),
-        ("Ona tili", "https://wordwall.net/uz/community/ona-tili"),
-        ("Ingliz tili", "https://wordwall.net/uz/community/english"),
-        ("Fizika", "https://wordwall.net/uz/community/fizika"),
-        ("Biologiya", "https://wordwall.net/uz/community/biologiya"),
-        ("Tarix", "https://wordwall.net/uz/community/tarix")
+        ("Matematika", "matematika"),
+        ("Ona tili", "ona-tili"),
+        ("Ingliz tili", "english"),
+        ("Fizika", "fizika"),
+        ("Kimyo", "kimyo"),
+        ("Biologiya", "biologiya"),
+        ("Tarix", "tarix"),
+        ("Geografiya", "geografiya")
     ]
     builder = InlineKeyboardBuilder()
-    for name, url in subjects:
-        builder.row(types.InlineKeyboardButton(text=name, url=url))
+    for name, query in subjects:
+        builder.row(types.InlineKeyboardButton(
+            text=f"📚 {name}", 
+            url=f"https://wordwall.net/uz-uz/community/{query}"
+        ))
     builder.row(types.InlineKeyboardButton(text="🔙 Orqaga", callback_data="main_menu"))
     await c.message.edit_text("🎡 *Fanlardan birini tanlang va tayyor o'yinlarni ko'ring:*", 
                              parse_mode="Markdown", reply_markup=builder.as_markup())
@@ -263,7 +268,6 @@ async def go_home(c: types.CallbackQuery, state: FSMContext):
 async def show_books(c: types.CallbackQuery):
     grade = c.data.split('_')[1]
     builder = InlineKeyboardBuilder()
-    # Demo data, buni BOOKS_DATA dan olish mumkin
     builder.row(types.InlineKeyboardButton(text="🏛 Kitob.uz", url="https://kitob.uz"))
     builder.row(types.InlineKeyboardButton(text="📘 Eduportal", url=f"http://eduportal.uz"))
     builder.row(types.InlineKeyboardButton(text="🔙 Orqaga", callback_data="gr_list"))
@@ -299,11 +303,11 @@ async def show_taqvim(m: types.Message):
 async def ai_start(m: types.Message, state: FSMContext):
     await state.set_state(BotStates.AI_MODE)
     kb = ReplyKeyboardBuilder()
-    kb.add(types.KeyboardButton(text="🔙 Rejimdan chiqish"))
+    kb.add(types.KeyboardButton(text="❌ Bekor qilish"))
     await m.answer("🤖 *ZUKKO AI REJIMI* \n\nIstalgan savolingizni yuboring, men tahlil qilaman. ✨", 
                    reply_markup=kb.as_markup(resize_keyboard=True), parse_mode="Markdown")
 
-@dp.message(BotStates.AI_MODE, F.text == "🔙 Rejimdan chiqish")
+@dp.message(BotStates.AI_MODE, F.text == "❌ Bekor qilish")
 async def ai_exit(m: types.Message, state: FSMContext):
     await state.clear()
     await m.answer("Oddiy menyuga qaytdingiz.", reply_markup=main_menu_kb())
@@ -342,7 +346,7 @@ async def show_tasks(m: types.Message):
     if not tasks: res += "Hozircha vazifalar yo'q. Yangi qo'shish uchun tugmani bosing. 👇"
     else:
         for t in tasks:
-            res += f"📌 *{t[1]}* \n⏰ Vaqt: `{t[2]}`\n/done\\_{t[0]} - Bajarildi\n\n"
+            res += f"📌 *{t[1]}* \n⏰ Vaqt: `{t[2]}`\n/done_{t[0]} - Bajarildi\n\n"
     await m.answer(res, parse_mode="Markdown", reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data == "clear_tasks")
@@ -365,24 +369,41 @@ async def cancel_action(m: types.Message, state: FSMContext):
     await m.answer("Amal bekor qilindi.", reply_markup=main_menu_kb())
 
 @dp.message(BotStates.ADDING_TASK_TEXT)
+@dp.message(BotStates.AI_MODE) # Also handle if user is in AI mode
 async def task_text_save(m: types.Message, state: FSMContext):
+    if await state.get_state() == BotStates.AI_MODE:
+        if m.text == "❌ Bekor qilish":
+            await state.clear()
+            await m.answer("AI rejimdan chiqdingiz.", reply_markup=main_menu_kb())
+            return
+        # If not cancel, proceed to AI
+        await ai_process(m)
+        return
+
     await state.update_data(txt=m.text)
     await state.set_state(BotStates.ADDING_TASK_TIME)
-    await m.answer("⏰ Qachon eslatay? (Format: 08:00, 15:30 kamida 5 ta belgi bo'lishi kerak)")
+    kb = ReplyKeyboardBuilder()
+    kb.add(types.KeyboardButton(text="❌ Bekor qilish"))
+    await m.answer("⏰ Qachon eslatay? (Format: 08:00, 15:30)", reply_markup=kb.as_markup(resize_keyboard=True))
 
 @dp.message(BotStates.ADDING_TASK_TIME)
 async def task_time_save(m: types.Message, state: FSMContext):
+    if m.text == "❌ Bekor qilish":
+        await state.clear()
+        await m.answer("Amal bekor qilindi.", reply_markup=main_menu_kb())
+        return
+
     time_str = m.text.replace(".", ":").replace(" ", "").strip()
     if ":" not in time_str:
-        if len(time_str) <= 2: time_str += ":00"
-        else: return await m.answer("❌ Noto'g'ri vaqt. Iltimos 08:00 yoki 15:30 kabi yozing!")
+        if len(time_str) >= 1 and len(time_str) <= 2: time_str += ":00"
+        else: return await m.answer("❌ Noto'g'ri vaqt. Iltimos 08:00 kabi yozing!")
     
     data = await state.get_data()
     now = datetime.now().strftime("%Y-%m-%d")
     await db_exec("INSERT INTO tasks (user_id, task_text, remind_time, created_at) VALUES (?, ?, ?, ?)", 
                   m.from_user.id, data['txt'], time_str, now)
     await state.clear()
-    await m.answer(f"✅ Vazifa saqlandi!\n📍 {data['txt']}\n⏰ {m.text}", reply_markup=main_menu_kb())
+    await m.answer(f"✅ Vazifa saqlandi!\n📍 {data['txt']}\n⏰ {time_str}", reply_markup=main_menu_kb())
 
 @dp.message(F.text.startswith("/done_"))
 async def mark_task_done(m: types.Message):
@@ -413,7 +434,7 @@ async def show_fact(m: types.Message):
         "🐘 Fillar sakray olmaydigan yagona sutemizuvchilardir.",
         "🌊 Dunyo okeanining faqat 5% qismi o'rganilgan.",
         "🍯 Asal hech qachon buzilmaydigan yagona oziq-ovqat mahsulotidir.",
-        "📱 Dunyodagi birinchi mobil telefon Motorola kompaniyasi tomonidan 1973-yilda yaratilgan."
+        "📱 Dunyodagi birinchi mobil telefon Motorola kompanayasi tomonidan 1973-yilda yaratilgan."
     ]
     await m.answer(f"🧐 *Bilasizmi?*\n\n{random.choice(facts)}", parse_mode="Markdown")
 
@@ -422,8 +443,15 @@ async def process_photo(m: types.Message):
     wait = await m.answer("⏳ _AI rasm tahlili boshlandi..._")
     try:
         file = await bot.get_file(m.photo[-1].file_id)
-        buf = await bot.download_file(file.file_path)
-        img_b64 = base64.b64encode(buf.read()).decode('utf-8')
+        # Download strictly using the integrated download method
+        destination = f"temp_{m.from_user.id}.jpg"
+        await bot.download_file(file.file_path, destination)
+        
+        with open(destination, "rb") as image_file:
+            img_b64 = base64.b64encode(image_file.read()).decode('utf-8')
+        
+        os.remove(destination) # Clean up
+        
         prompt = "Mana shu rasmda nima borligini aytib ber, va undagi savol/masalani yechib ber: " + (m.caption or "")
         res = await ask_ai(prompt, img_b64)
         await wait.edit_text(f"✅ *AI TAHLIL NATIJASI* \n\n{res}", parse_mode="Markdown")
