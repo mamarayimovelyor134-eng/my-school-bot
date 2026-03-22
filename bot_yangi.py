@@ -491,19 +491,38 @@ async def main():
     if not TOKEN:
         logger.critical("❌ BOT_TOKEN TOPILMADI!")
         return
-    await init_db()
+    
+    try:
+        await init_db()
+    except Exception as e:
+        logger.error(f"DB Init Error: {e}")
+
     asyncio.create_task(reminder_loop())
     asyncio.create_task(keep_alive())
     
-    app = web.Application()
-    app.router.add_get("/", handle_web)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", 8080)))
-    await site.start()
+    # Web server optional check - if port is busy, don't crash
+    try:
+        app = web.Application()
+        app.router.add_get("/", handle_web)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", 8080)))
+        await site.start()
+        logger.info("🌐 Web server tayyor.")
+    except Exception as e:
+        logger.warning(f"⚠️ Web server ishga tushmadi (lokal ishlash uchun ahamiyatsiz): {e}")
     
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        logger.info("✅ ZUKKO BOT muvaffaqiyatli ishga tushdi!")
+        await dp.start_polling(bot)
+    except Exception as e:
+        logger.critical(f"❌ Polling Error: {e}")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot to'xtatildi.")
+    except Exception as e:
+        logger.error(f"Fatal Error: {e}")
