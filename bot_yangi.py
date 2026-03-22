@@ -310,7 +310,7 @@ async def show_bsb(m: types.Message):
 
 @dp.message(F.text == "📅 Taqvim rejalar")
 async def show_taqvim(m: types.Message):
-    await m.answer("📅 *TAQVIM-MAVZU REJALAR*\n\n2024-2025 o'quv yili uchun barcha fanlardan taqvim-mavzu rejalarini quyidagi ishonchli portallardan yuklab olishingiz mumkin:\n\n🔹 [Taqvim-rejalar (idum.uz)](https://idum.uz/uz/archives/16474)\n🔹 [Taqvim-rejalar (muallimlar.uz)](https://muallimlar.uz/taqvim-reja/)\n\nFaylni yuklab olish uchun kerakli sinf va fanni tanlang.", reply_markup=back_inline(), parse_mode="Markdown")
+    await m.answer("📅 *TAQVIM-MAVZU REJALAR*\n\n2024-2025 o'quv yili uchun barcha fanlardan taqvim-mavzu rejalarini quyidagi ishonchli portallardan yuklab olishingiz mumkin:\n\n🔹 [Taqvim-rejalar (muallimlar.uz)](https://muallimlar.uz/taqvim-reja/)\n🔹 [Taqvim-rejalar (bellashuv.uz)](https://bellashuv.uz/taqvim-reja-2024-2025/)\n\nUshbu saytlardan o'zingizga kerakli sinf va fanni tanlab, faylni yuklab oling.", reply_markup=back_inline(), parse_mode="Markdown")
 
 @dp.message(F.text == "🤖 AI Yordamchi")
 async def ai_start(m: types.Message, state: FSMContext):
