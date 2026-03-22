@@ -306,11 +306,11 @@ async def show_online_tests(m: types.Message):
 
 @dp.message(F.text == "📊 BSB (Nazorat)")
 async def show_bsb(m: types.Message):
-    await m.answer("📊 *BSB (Baho-Sifat-Baholash)* \n\nUshbu bo'limda nazorat ishlari namunalari va mezonlari bilan tanishishingiz mumkin:\n\n🔹 [BSB materiallari (idum.uz)](https://idum.uz/uz/archives/category/n-i)\n\nShuningdek, savolning rasmini yuborsangiz, AI yordamida yechimini olishingiz mumkin! 🤖", reply_markup=back_inline(), parse_mode="Markdown")
+    await m.answer("📊 *BSB (Baho-Sifat-Baholash)* \n\nRasmiy nazorat ishlari namunalari va mezonlari:\n\n🔹 [ZiyoNet - Dars ishlanmalar bo'limi](https://library.ziyonet.uz/uz/list/manual)\n🔹 [RTM Rasmiy Metodik Tavsiyalar](https://uzedu.uz/oz/lessons/methodical-manuals)\n\nRasm yuboring, AI xatolarni tekshirib yechib beradi! ✨", reply_markup=back_inline(), parse_mode="Markdown")
 
 @dp.message(F.text == "📅 Taqvim rejalar")
 async def show_taqvim(m: types.Message):
-    await m.answer("📅 *TAQVIM-MAVZU REJALAR*\n\n2024-2025 o'quv yili uchun barcha fanlardan taqvim-mavzu rejalarini quyidagi ishonchli portallardan yuklab olishingiz mumkin:\n\n🔹 [Taqvim-rejalar (muallimlar.uz)](https://muallimlar.uz/taqvim-reja/)\n🔹 [Taqvim-rejalar (bellashuv.uz)](https://bellashuv.uz/taqvim-reja-2024-2025/)\n\nUshbu saytlardan o'zingizga kerakli sinf va fanni tanlab, faylni yuklab oling.", reply_markup=back_inline(), parse_mode="Markdown")
+    await m.answer("📅 *TAQVIM-MAVZU REJALAR (2024-2025)*\n\nBarcha fanlar bo'yicha tasdiqlangan rasmiy rejalar reklamasiz manbalarda:\n\n🔹 [ZiyoNet Kutubxonasi](https://library.ziyonet.uz/uz/list/school-program)\n🔹 [Kitob.uz - Interaktiv Resurslar](https://kitob.uz/)\n\nFaylni yuklab olayotganingizda, u rasmiy davlat serveridan keladi. Bu xavfsiz va toza.", reply_markup=back_inline(), parse_mode="Markdown")
 
 @dp.message(F.text == "🤖 AI Yordamchi")
 async def ai_start(m: types.Message, state: FSMContext):
