@@ -101,7 +101,9 @@ async def db_fetch(query, *args, one=False):
 
 # --- AI & CONTENT DATA ---
 async def ask_ai(question: str, image_b64: str = None) -> str:
-    # 1. Gemini API (If available)
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    
+    # 1. Gemini API (Premium - Key required)
     if GEMINI_API_KEY:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         parts = [{"text": question}]
@@ -109,26 +111,34 @@ async def ask_ai(question: str, image_b64: str = None) -> str:
             parts.append({"inline_data": {"mime_type": "image/jpeg", "data": image_b64}})
         payload = {"contents": [{"parts": parts}]}
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, json=payload, timeout=25) as resp:
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.post(url, json=payload, timeout=20) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         return data["candidates"][0]["content"]["parts"][0]["text"]
         except: pass
     
-    # 2. Permanent Fast Fallback (Pollinations - No Key Needed)
-    try:
-        encoded_q = urllib.parse.quote(question)
-        # We use a simpler reliable AI model for free fallback
-        url = f"https://text.pollinations.ai/{encoded_q}?model=openai&cache=true"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=20) as resp:
-                if resp.status == 200:
-                    return await resp.text()
-    except Exception as e:
-        logger.error(f"AI Fallback Error: {e}")
-    
-    return "❌ Tarmoqda yuklama yuqori. Birozdan so'ng qayta urinib ko'ring yoki Admin bilan bog'laning."
+    # 2. Free Fallback (Pollinations) - Optimized
+    for attempt in range(2):
+        try:
+            encoded_q = urllib.parse.quote(question)
+            # Using the absolute simplest URL which was verified to work
+            url = f"https://text.pollinations.ai/{encoded_q}"
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.get(url, timeout=25) as resp:
+                    if resp.status == 200:
+                        return await resp.text()
+                    elif resp.status >= 500:
+                        await asyncio.sleep(2) # Wait and retry 500s
+                        continue
+        except Exception as e:
+            if attempt == 1: logger.error(f"AI Final Failure: {e}")
+            await asyncio.sleep(1)
+            
+    return ("⚠️ Hozirda bepul AI serverida yuklama juda yuqori.\n\n"
+            "💡 Maslahat: Doimiy va tezkor ishlash uchun o'zingizning bepul Gemini API kalitingizni oling:\n"
+            "👉 aistudio.google.com\n"
+            "Olingan kalitni `.env` fayliga `GEMINI_API_KEY` nomi bilan yozing.")
 
 KREATIV_DATA = [
     ("🧩 Domino metodi", "Mavzuni tushunish uchun zanjir hosil qilish o'yini."),
@@ -301,7 +311,7 @@ async def back_to_grades(c: types.CallbackQuery):
 
 @dp.message(F.text == "🎥 Video darslar")
 async def show_videos(m: types.Message):
-    await m.answer("🎥 *VIDEO DARSLAR PORTALLARI* \n\n🔹 [Maktab.uz](https://maktab.uz/)\n🔹 [IT-Park YouTube](https://youtube.com/@itpark)\n🔹 [Kundalik.com](https://kundalik.com/)", 
+    await m.answer("🎥 *VIDEO DARSLAR PORTALLARI* \n\n🔹 [Maktab.uz](https://maktab.uz/)\n🔹 [IT-Park YouTube](https://youtube.com/@itpark_uz)\n🔹 [Kundalik.com](https://kundalik.com/)", 
                    parse_mode="Markdown", reply_markup=back_inline(), disable_web_page_preview=True)
 
 @dp.message(F.text == "📊 BSB (Nazorat)")
