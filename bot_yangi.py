@@ -299,46 +299,33 @@ async def show_videos(m: types.Message):
     await m.answer("🎥 *VIDEO DARSLAR PORTALLARI* \n\n🔹 [Maktab.uz](https://maktab.uz/)\n🔹 [IT-Park YouTube](https://youtube.com/@itpark)\n🔹 [Kundalik.com](https://kundalik.com/)", 
                    parse_mode="Markdown", reply_markup=back_inline(), disable_web_page_preview=True)
 
-@dp.message(F.text == "📅 Taqvim rejalar")
-async def show_taqvim_menu(m: types.Message):
-    builder = InlineKeyboardBuilder()
-    subjects = [
-        ("📐 Matematika", "sub_mate"),
-        ("🇺🇿 Ona tili", "sub_onat"),
-        ("🇬🇧 Ingliz tili", "sub_eng"),
-        ("⚛️ Fizika", "sub_fiz"),
-        ("🔬 Biologiya", "sub_biol")
-    ]
-    for name, code in subjects:
-        builder.row(types.InlineKeyboardButton(text=name, callback_data=code))
-    builder.row(types.InlineKeyboardButton(text="🔙 Orqaga", callback_data="main_menu"))
-    await m.answer("📅 *2024-2025 TAQVIM REJALAR*\n\nFaylni to'g'ridan-to'g'ri shu yerning o'zida (reklamasiz) yuboraman. \n\nIltimos, fanni tanlang:", 
-                   parse_mode="Markdown", reply_markup=builder.as_markup())
+@dp.message(F.text == "📊 BSB (Nazorat)")
+async def show_bsb_new(m: types.Message):
+    res = "📊 *BSB VA NAZORAT ISHLARI* \n\n"
+    res += "Ushbu bo'limda hech qanday reklama yo'q! 🚫\n\n"
+    res += "🤖 *AI Yordamida:* Meni xuddi o'qituvchi yordamchisidek ishlating. Masalan: \n"
+    res += "— _'6-sinf Matematika 1-BSB savollarini tuzib ber'_\n"
+    res += "— _'Fizika 10-sinf nazorat ishi namunasi'_\n\n"
+    res += "Men sizga tayyor savollar va javoblar variantini shu yerda yozib beraman. ✨"
+    await m.answer(res, reply_markup=back_inline(), parse_mode="Markdown")
 
-@dp.callback_query(F.data.startswith("sub_"))
-async def send_plan_document(c: types.CallbackQuery):
-    sub = c.data.split('_')[1]
-    urls = {
-        "mate": "https://shosh.uz/wp-content/uploads/2024/09/Matematika_5-11-sinf.pdf",
-        "onat": "https://shosh.uz/wp-content/uploads/2024/09/Ona_tili_5-11-sinf.pdf",
-        "eng": "https://shosh.uz/wp-content/uploads/2024/09/English_1-11-sinf.pdf",
-        "fiz": "https://shosh.uz/wp-content/uploads/2024/09/Fizika_7-11-sinf.pdf",
-        "biol": "https://shosh.uz/wp-content/uploads/2024/09/Biologiya_5-11-sinf.pdf"
-    }
+@dp.message(F.text == "📅 Taqvim rejalar")
+async def show_taqvim_new(m: types.Message):
+    res = "📅 *TAQVIM-MAVZU REJALAR (2024-2025)*\n\n"
+    res += "Endi saytlardan reja qidirish shart emas! 👋\n\n"
+    res += "🤖 *Bot orqali:* Shunchaki kerakli fan va sinfingizni yozib, 'yillik rejasini chiqar' deb so'rang.\n"
+    res += "Masalan: _'7-sinf Ingliz tili yillik rejasini yoz'_\n\n"
+    res += "Men sizga mavzular ro'yxatini reklamasiz, toza matn ko'rinishida taqdim etaman. 📚"
+    await m.answer(res, reply_markup=back_inline(), parse_mode="Markdown")
+
+@dp.message(F.text == "📝 Onlayn testlar")
+async def show_online_tests_new(m: types.Message):
+    builder = InlineKeyboardBuilder()
+    builder.row(types.InlineKeyboardButton(text="🚀 Tezkor Quizni boshlash", callback_data="start_quiz"))
+    builder.row(types.InlineKeyboardButton(text="🏠 Bosh menyu", callback_data="main_menu"))
     
-    await c.answer("⏳ Fayl tayyorlanmoqda, kuting...")
-    target_url = urls.get(sub)
-    
-    if target_url:
-        try:
-            await c.message.answer_document(
-                document=types.URLInputFile(target_url, filename=f"{sub}_reja_2024.pdf"),
-                caption=f"✅ {sub.upper()} fani bo'yicha 2024-2025 o'quv yili uchun taqvim-reja."
-            )
-        except Exception as e:
-            await c.message.answer(f"❌ Faylni yuborishda xatolik: {e}\nLekin ushbu havola orqali yuklab olishingiz mumkin: {target_url}")
-    else:
-        await c.message.answer("❌ Ushbu fan bo'yicha reja hozircha bazada mavjud emas.")
+    await m.answer("📝 *TEST TOPSHIRISH (100% REKLAMASIZ)* \n\nHech qanday saytlarga o'tishsiz, bilimingizni bot ichida sinang! 👇", 
+                   parse_mode="Markdown", reply_markup=builder.as_markup())
 
 @dp.message(F.text == "🤖 AI Yordamchi")
 async def ai_start(m: types.Message, state: FSMContext):
@@ -359,26 +346,6 @@ async def ai_process(m: types.Message):
     wait = await m.answer("⏳ _O'ylanmoqdaman..._")
     res = await ask_ai(m.text)
     await wait.edit_text(f"🤖 *ZUKKO JAVOBI:* \n\n{res}", parse_mode="Markdown")
-
-@dp.message(F.text == "📊 BSB (Nazorat)")
-async def show_bsb(m: types.Message):
-    res = "📊 *BSB NAZORAT QIDIRUVCHISI* \n\n"
-    res += "Bu bo'lim endi 100% reklamadan xoli! 🚫\n\n"
-    res += "Shunchaki botga o'zingizga kerakli BSB nomini yozing:\n"
-    res += "— _'Ona tili 1-BSB 8-sinf'_\n"
-    res += "— _'Matematika 10-sinf nazorat ishi'_\n\n"
-    res += "AI sizga savollarni shu yerning o'zida yozib beradi. ✨"
-    await m.answer(res, reply_markup=back_inline(), parse_mode="Markdown")
-
-@dp.message(F.text == "📝 Onlayn testlar")
-async def show_online_tests(m: types.Message):
-    builder = InlineKeyboardBuilder()
-    builder.row(types.InlineKeyboardButton(text="🚀 Tezkor Quiz (Bot ichida)", callback_data="start_quiz"))
-    builder.row(types.InlineKeyboardButton(text="🏛 DTM Rasmiy Portal", url="https://uzbmb.uz/"))
-    builder.row(types.InlineKeyboardButton(text="🔙 Orqaga", callback_data="main_menu"))
-    
-    await m.answer("📝 *TEST TOPSHIRISH BO'LIMI* \n\nQaysi usulda bilimingizni sinab ko'rmoqchisiz?", 
-                   parse_mode="Markdown", reply_markup=builder.as_markup())
 
 @dp.message(F.text == "🧩 Bilim testi")
 @dp.callback_query(F.data == "start_quiz")
