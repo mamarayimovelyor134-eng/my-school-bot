@@ -299,18 +299,46 @@ async def show_videos(m: types.Message):
     await m.answer("🎥 *VIDEO DARSLAR PORTALLARI* \n\n🔹 [Maktab.uz](https://maktab.uz/)\n🔹 [IT-Park YouTube](https://youtube.com/@itpark)\n🔹 [Kundalik.com](https://kundalik.com/)", 
                    parse_mode="Markdown", reply_markup=back_inline(), disable_web_page_preview=True)
 
-@dp.message(F.text == "📝 Onlayn testlar")
-async def show_online_tests(m: types.Message):
-    await m.answer("📝 *ONLAYN TEST TOPSHIRISH* \n\n🔹 [DTM.uz](https://dtm.uz/)\n🔹 [Test.uz](https://test.uz/)\n🔹 [Prep.uz](https://prep.uz/)", 
-                   parse_mode="Markdown", reply_markup=back_inline(), disable_web_page_preview=True)
-
-@dp.message(F.text == "📊 BSB (Nazorat)")
-async def show_bsb(m: types.Message):
-    await m.answer("📊 *BSB (Baho-Sifat-Baholash)* \n\nUshbu bo'limda nazorat ishlari namunalari va mezonlari bilan tanishishingiz mumkin:\n\n🔹 [BSB materiallari (Baza)](https://imtiho.uz/category/bsb-testlari/)\n🔹 [Metodik tavsiyalar (Rasmiy)](https://rtm.uz)\n\nShuningdek, AI yordamida har qanday savolni yechishingiz mumkin! ✨", reply_markup=back_inline(), parse_mode="Markdown")
-
 @dp.message(F.text == "📅 Taqvim rejalar")
-async def show_taqvim(m: types.Message):
-    await m.answer("📅 *TAQVIM-MAVZU REJALAR (2024-2025)*\n\nBarcha fanlar bo'yicha tasdiqlangan rasmiy rejalar:\n\n🔹 [Taqvim rejalar arxivi](https://idum.uz/uz/archives/category/reja)\n🔹 [Sinflar kesimida rejalar](https://eduportal.uz/)\n\nUshbu portallar rasmiy ta'lim resurslari hisoblanadi.", reply_markup=back_inline(), parse_mode="Markdown")
+async def show_taqvim_menu(m: types.Message):
+    builder = InlineKeyboardBuilder()
+    subjects = [
+        ("📐 Matematika", "sub_mate"),
+        ("🇺🇿 Ona tili", "sub_onat"),
+        ("🇬🇧 Ingliz tili", "sub_eng"),
+        ("⚛️ Fizika", "sub_fiz"),
+        ("🔬 Biologiya", "sub_biol")
+    ]
+    for name, code in subjects:
+        builder.row(types.InlineKeyboardButton(text=name, callback_data=code))
+    builder.row(types.InlineKeyboardButton(text="🔙 Orqaga", callback_data="main_menu"))
+    await m.answer("📅 *2024-2025 TAQVIM REJALAR*\n\nFaylni to'g'ridan-to'g'ri shu yerning o'zida (reklamasiz) yuboraman. \n\nIltimos, fanni tanlang:", 
+                   parse_mode="Markdown", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data.startswith("sub_"))
+async def send_plan_document(c: types.CallbackQuery):
+    sub = c.data.split('_')[1]
+    urls = {
+        "mate": "https://shosh.uz/wp-content/uploads/2024/09/Matematika_5-11-sinf.pdf",
+        "onat": "https://shosh.uz/wp-content/uploads/2024/09/Ona_tili_5-11-sinf.pdf",
+        "eng": "https://shosh.uz/wp-content/uploads/2024/09/English_1-11-sinf.pdf",
+        "fiz": "https://shosh.uz/wp-content/uploads/2024/09/Fizika_7-11-sinf.pdf",
+        "biol": "https://shosh.uz/wp-content/uploads/2024/09/Biologiya_5-11-sinf.pdf"
+    }
+    
+    await c.answer("⏳ Fayl tayyorlanmoqda, kuting...")
+    target_url = urls.get(sub)
+    
+    if target_url:
+        try:
+            await c.message.answer_document(
+                document=types.URLInputFile(target_url, filename=f"{sub}_reja_2024.pdf"),
+                caption=f"✅ {sub.upper()} fani bo'yicha 2024-2025 o'quv yili uchun taqvim-reja."
+            )
+        except Exception as e:
+            await c.message.answer(f"❌ Faylni yuborishda xatolik: {e}\nLekin ushbu havola orqali yuklab olishingiz mumkin: {target_url}")
+    else:
+        await c.message.answer("❌ Ushbu fan bo'yicha reja hozircha bazada mavjud emas.")
 
 @dp.message(F.text == "🤖 AI Yordamchi")
 async def ai_start(m: types.Message, state: FSMContext):
@@ -332,19 +360,60 @@ async def ai_process(m: types.Message):
     res = await ask_ai(m.text)
     await wait.edit_text(f"🤖 *ZUKKO JAVOBI:* \n\n{res}", parse_mode="Markdown")
 
+@dp.message(F.text == "📊 BSB (Nazorat)")
+async def show_bsb(m: types.Message):
+    res = "📊 *BSB NAZORAT QIDIRUVCHISI* \n\n"
+    res += "Bu bo'lim endi 100% reklamadan xoli! 🚫\n\n"
+    res += "Shunchaki botga o'zingizga kerakli BSB nomini yozing:\n"
+    res += "— _'Ona tili 1-BSB 8-sinf'_\n"
+    res += "— _'Matematika 10-sinf nazorat ishi'_\n\n"
+    res += "AI sizga savollarni shu yerning o'zida yozib beradi. ✨"
+    await m.answer(res, reply_markup=back_inline(), parse_mode="Markdown")
+
+@dp.message(F.text == "📝 Onlayn testlar")
+async def show_online_tests(m: types.Message):
+    builder = InlineKeyboardBuilder()
+    builder.row(types.InlineKeyboardButton(text="🚀 Tezkor Quiz (Bot ichida)", callback_data="start_quiz"))
+    builder.row(types.InlineKeyboardButton(text="🏛 DTM Rasmiy Portal", url="https://uzbmb.uz/"))
+    builder.row(types.InlineKeyboardButton(text="🔙 Orqaga", callback_data="main_menu"))
+    
+    await m.answer("📝 *TEST TOPSHIRISH BO'LIMI* \n\nQaysi usulda bilimingizni sinab ko'rmoqchisiz?", 
+                   parse_mode="Markdown", reply_markup=builder.as_markup())
+
 @dp.message(F.text == "🧩 Bilim testi")
-async def show_quiz(m: types.Message):
+@dp.callback_query(F.data == "start_quiz")
+async def start_zukko_quiz(event: types.Message | types.CallbackQuery):
     q = random.choice(QUIZ_DATA)
     builder = InlineKeyboardBuilder()
-    for o in q['o']: builder.row(types.InlineKeyboardButton(text=o, callback_data=f"ans_{o}_{q['a']}"))
-    await m.answer(f"🧩 *SAVOL:* \n{q['q']}", reply_markup=builder.as_markup(), parse_mode="Markdown")
+    random.shuffle(q['o']) # Har doim javoblar o'rni o'zgarsin
+    for o in q['o']:
+        builder.row(types.InlineKeyboardButton(text=o, callback_data=f"ans_{o}_{q['a']}"))
+    
+    text = f"🧩 *ZUKKO QUIZ* \n\n❓ *SAVOL:* {q['q']}"
+    
+    if isinstance(event, types.Message):
+        await event.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+    else:
+        await event.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+        await event.answer()
 
 @dp.callback_query(F.data.startswith("ans_"))
-async def check_quiz(c: types.CallbackQuery):
-    _, ans, correct = c.data.split('_')
-    if ans == correct: await c.answer("✅ To'g'ri topdingiz!", show_alert=True)
-    else: await c.answer(f"❌ Noto'g'ri. To'g'ri javob: {correct}", show_alert=True)
-    await c.message.delete()
+async def check_quiz_result(c: types.CallbackQuery):
+    data = c.data.split('_')
+    ans = data[1]
+    correct = data[2]
+    
+    if ans == correct:
+        txt = "✅ *TO'G'RI!* \n\nBarakalla, siz haqiqiy zukkosiz! ✨"
+    else:
+        txt = f"❌ *NOTO'G'RI...* \n\nTo'g'ri javob: *{correct}* edi. Yana urinib ko'ramizmi?"
+    
+    builder = InlineKeyboardBuilder()
+    builder.row(types.InlineKeyboardButton(text="🔄 Yana bitta savol", callback_data="start_quiz"))
+    builder.row(types.InlineKeyboardButton(text="🏠 Menu", callback_data="main_menu"))
+    
+    await c.message.edit_text(txt, reply_markup=builder.as_markup(), parse_mode="Markdown")
+    await c.answer()
 
 # --- TASK MANAGEMENT ---
 @dp.message(F.text == "📝 Vazifalarim")
