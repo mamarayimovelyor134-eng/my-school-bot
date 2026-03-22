@@ -101,6 +101,7 @@ async def db_fetch(query, *args, one=False):
 
 # --- AI & CONTENT DATA ---
 async def ask_ai(question: str, image_b64: str = None) -> str:
+    # 1. Gemini API (If available)
     if GEMINI_API_KEY:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         parts = [{"text": question}]
@@ -115,15 +116,19 @@ async def ask_ai(question: str, image_b64: str = None) -> str:
                         return data["candidates"][0]["content"]["parts"][0]["text"]
         except: pass
     
-    if not image_b64:
-        system = "Sen o'zbek maktab o'quvchilariga yordam beruvchi aqlli AI yordamchisan."
-        url = f"https://text.pollinations.ai/{urllib.parse.quote(question)}?model=openai&system={urllib.parse.quote(system)}&json=false"
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=20) as resp:
-                    if resp.status == 200: return await resp.text()
-        except: pass
-    return "❌ Uzr, hozircha bu so'rovni bajarib bo'lmaydi."
+    # 2. Permanent Fast Fallback (Pollinations - No Key Needed)
+    try:
+        encoded_q = urllib.parse.quote(question)
+        # We use a simpler reliable AI model for free fallback
+        url = f"https://text.pollinations.ai/{encoded_q}?model=openai&cache=true"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=20) as resp:
+                if resp.status == 200:
+                    return await resp.text()
+    except Exception as e:
+        logger.error(f"AI Fallback Error: {e}")
+    
+    return "❌ Tarmoqda yuklama yuqori. Birozdan so'ng qayta urinib ko'ring yoki Admin bilan bog'laning."
 
 KREATIV_DATA = [
     ("🧩 Domino metodi", "Mavzuni tushunish uchun zanjir hosil qilish o'yini."),
