@@ -300,23 +300,26 @@ async def show_videos(m: types.Message):
                    parse_mode="Markdown", reply_markup=back_inline(), disable_web_page_preview=True)
 
 @dp.message(F.text == "📊 BSB (Nazorat)")
-async def show_bsb_new(m: types.Message):
+async def show_bsb_new(m: types.Message, state: FSMContext):
+    await state.set_state(BotStates.AI_MODE)
+    kb = ReplyKeyboardBuilder()
+    kb.add(types.KeyboardButton(text="❌ Bekor qilish"))
     res = "📊 *BSB VA NAZORAT ISHLARI* \n\n"
-    res += "Ushbu bo'limda hech qanday reklama yo'q! 🚫\n\n"
-    res += "🤖 *AI Yordamida:* Meni xuddi o'qituvchi yordamchisidek ishlating. Masalan: \n"
-    res += "— _'6-sinf Matematika 1-BSB savollarini tuzib ber'_\n"
-    res += "— _'Fizika 10-sinf nazorat ishi namunasi'_\n\n"
-    res += "Men sizga tayyor savollar va javoblar variantini shu yerda yozib beraman. ✨"
-    await m.answer(res, reply_markup=back_inline(), parse_mode="Markdown")
+    res += "🤖 *AI YOQILDI!* Shunchaki kerakli fan va sinfingizni yozing.\n"
+    res += "Masalan: _'6-sinf Matematika 1-BSB savollarini tuzib ber'_\n\n"
+    res += "Men sizga tayyor javoblarni shu yerda yozib beraman. ✨"
+    await m.answer(res, reply_markup=kb.as_markup(resize_keyboard=True), parse_mode="Markdown")
 
 @dp.message(F.text == "📅 Taqvim rejalar")
-async def show_taqvim_new(m: types.Message):
+async def show_taqvim_new(m: types.Message, state: FSMContext):
+    await state.set_state(BotStates.AI_MODE)
+    kb = ReplyKeyboardBuilder()
+    kb.add(types.KeyboardButton(text="❌ Bekor qilish"))
     res = "📅 *TAQVIM-MAVZU REJALAR (2024-2025)*\n\n"
-    res += "Endi saytlardan reja qidirish shart emas! 👋\n\n"
-    res += "🤖 *Bot orqali:* Shunchaki kerakli fan va sinfingizni yozib, 'yillik rejasini chiqar' deb so'rang.\n"
-    res += "Masalan: _'7-sinf Ingliz tili yillik rejasini yoz'_\n\n"
-    res += "Men sizga mavzular ro'yxatini reklamasiz, toza matn ko'rinishida taqdim etaman. 📚"
-    await m.answer(res, reply_markup=back_inline(), parse_mode="Markdown")
+    res += "🤖 *AI YOQILDI!* Kerakli fan va sinfni yillik rejasini so'rang.\n"
+    res += "Masalan: _'7-sinf Ingliz tili yillik rejasini chiqar'_\n\n"
+    res += "Hamma mavzularni tartib bilan chiqarib beraman. 📚"
+    await m.answer(res, reply_markup=kb.as_markup(resize_keyboard=True), parse_mode="Markdown")
 
 @dp.message(F.text == "📝 Onlayn testlar")
 async def show_online_tests_new(m: types.Message):
