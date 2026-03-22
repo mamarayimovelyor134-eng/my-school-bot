@@ -306,11 +306,11 @@ async def show_online_tests(m: types.Message):
 
 @dp.message(F.text == "📊 BSB (Nazorat)")
 async def show_bsb(m: types.Message):
-    await m.answer("📊 *BSB (Baho-Sifat-Baholash)* \n\nRasmiy nazorat ishlari namunalari va mezonlari:\n\n🔹 [ZiyoNet - Dars ishlanmalar bo'limi](https://library.ziyonet.uz/uz/list/manual)\n🔹 [RTM Rasmiy Metodik Tavsiyalar](https://uzedu.uz/oz/lessons/methodical-manuals)\n\nRasm yuboring, AI xatolarni tekshirib yechib beradi! ✨", reply_markup=back_inline(), parse_mode="Markdown")
+    await m.answer("📊 *BSB (Baho-Sifat-Baholash)* \n\nUshbu bo'limda nazorat ishlari namunalari va mezonlari bilan tanishishingiz mumkin:\n\n🔹 [BSB materiallari (Baza)](https://imtiho.uz/category/bsb-testlari/)\n🔹 [Metodik tavsiyalar (Rasmiy)](https://rtm.uz)\n\nShuningdek, AI yordamida har qanday savolni yechishingiz mumkin! ✨", reply_markup=back_inline(), parse_mode="Markdown")
 
 @dp.message(F.text == "📅 Taqvim rejalar")
 async def show_taqvim(m: types.Message):
-    await m.answer("📅 *TAQVIM-MAVZU REJALAR (2024-2025)*\n\nBarcha fanlar bo'yicha tasdiqlangan rasmiy rejalar reklamasiz manbalarda:\n\n🔹 [ZiyoNet Kutubxonasi](https://library.ziyonet.uz/uz/list/school-program)\n🔹 [Kitob.uz - Interaktiv Resurslar](https://kitob.uz/)\n\nFaylni yuklab olayotganingizda, u rasmiy davlat serveridan keladi. Bu xavfsiz va toza.", reply_markup=back_inline(), parse_mode="Markdown")
+    await m.answer("📅 *TAQVIM-MAVZU REJALAR (2024-2025)*\n\nBarcha fanlar bo'yicha tasdiqlangan rasmiy rejalar:\n\n🔹 [Taqvim rejalar arxivi](https://idum.uz/uz/archives/category/reja)\n🔹 [Sinflar kesimida rejalar](https://eduportal.uz/)\n\nUshbu portallar rasmiy ta'lim resurslari hisoblanadi.", reply_markup=back_inline(), parse_mode="Markdown")
 
 @dp.message(F.text == "🤖 AI Yordamchi")
 async def ai_start(m: types.Message, state: FSMContext):
