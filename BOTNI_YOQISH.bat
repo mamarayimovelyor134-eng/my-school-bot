@@ -1,5 +1,5 @@
 @echo off
-title Maktab Boti - ZUKKO MEGA KUCH
+title International Taxi Bot - ZUKKO MEGA KUCH
 echo Barcha eski botlar o'chirilmoqda...
 taskkill /f /im python.exe >nul 2>&1
 taskkill /f /im py.exe >nul 2>&1
